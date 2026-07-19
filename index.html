@@ -137,6 +137,8 @@ input[type=text], input[type=number]{background:var(--surface-2); border:none; b
 .badge.green{background:var(--green); color:#fff;}
 .badge.yellow{background:var(--yellow); color:var(--on-state);}
 .badge.red{background:var(--red); color:#fff;}
+.badge.neutral{background:var(--chip); color:var(--text-2);}
+.nogym-link{display:inline-block; margin-top:12px; color:#fff; opacity:0.9; text-decoration:underline; font-weight:600; cursor:pointer;}
 .stepper{display:flex; align-items:center; gap:14px; justify-content:center; margin:16px 0;}
 .stepper button{width:52px; height:52px; border-radius:50%; background:var(--chip); border:none; color:#fff; font-size:26px; font-weight:700;}
 .stepper .val{font-size:40px; font-weight:700; min-width:70px; text-align:center;}
@@ -167,7 +169,43 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
 
 <script>
 'use strict';
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
+
+/* ---------- wall-clock timers ----------
+   All in-session timers derive their value from Date.now() timestamps, never
+   from a counter incremented per tick. Mobile browsers throttle/suspend
+   setInterval when the screen sleeps or the tab is backgrounded; a counter
+   would freeze and under-count. Here the interval only repaints — the numbers
+   come from wall-clock math, so they stay correct across sleep, and a
+   visibilitychange/pageshow/focus handler snaps the display on wake. */
+function makeCountUp(displayId, toggleBtnId){
+  return {
+    accMs:0, segStart:null, interval:null, running:false,
+    elapsedSec(){ return Math.floor((this.accMs + (this.running ? Date.now()-this.segStart : 0))/1000); },
+    render(){ const el=document.getElementById(displayId); if(el){ const t=this.elapsedSec(); el.textContent = pad(Math.floor(t/60))+':'+pad(t%60); } },
+    toggle(){
+      const btn=document.getElementById(toggleBtnId);
+      if(this.running){ this.accMs += Date.now()-this.segStart; this.segStart=null; this.running=false; clearInterval(this.interval); this.interval=null; if(btn) btn.textContent='RESUME'; }
+      else { this.segStart=Date.now(); this.running=true; clearInterval(this.interval); this.interval=setInterval(()=>this.render(),250); if(btn) btn.textContent='PAUSE'; this.render(); }
+    },
+    stop(){ if(this.running){ this.accMs += Date.now()-this.segStart; this.segStart=null; this.running=false; } clearInterval(this.interval); this.interval=null; },
+    minutes(){ return Math.round(this.elapsedSec()/60); },
+    reset(){ this.accMs=0; this.segStart=null; this.running=false; clearInterval(this.interval); this.interval=null; }
+  };
+}
+const cardioTimer  = makeCountUp('cardio-timer','cardio-toggle');
+const recTimer     = makeCountUp('rec-timer','rec-toggle');
+const outdoorTimer = makeCountUp('outdoor-timer','outdoor-toggle');
+
+function refreshTimers(){
+  try{
+    if(restEndAt!=null) renderRestTimer();
+    cardioTimer.render(); recTimer.render(); outdoorTimer.render();
+  }catch(e){}
+}
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) refreshTimers(); });
+window.addEventListener('pageshow', refreshTimers);
+window.addEventListener('focus', refreshTimers);
 
 /* ---------- Storage adapter ---------- */
 const store = {
@@ -297,9 +335,11 @@ const Screens = { render(name,params){
 /* ================= HOME ================= */
 let readinessAns = {sleep:null, sore:null, energy:null};
 let weeklyFields = {waist:'', steps:''};
+let mvsMode = false; // set by the "No gym today" link on a strength day
 
 function renderHome(){
   ensureInit();
+  mvsMode = false;
   const cfg = store.get('config');
   const meta = store.get('meta');
   const today = todayStr();
@@ -335,12 +375,16 @@ function renderHome(){
     const slot = scheduleForDate(today);
     const isStrength = slot==='S';
     const label = isStrength ? `Strength ${nextStrengthLetter()}` : 'Cardio';
+    const noGymLink = isStrength
+      ? `<div><a class="nogym-link" id="nogym-link" onclick="toggleNoGym(this)">No gym today</a></div>`
+      : '';
     todayCardHtml = `
       <div class="card accent-card" id="today-card">
         <div class="card-header">
           <div class="card-title">${label}</div>
         </div>
         <div class="sub">Answer readiness below to start.</div>
+        ${noGymLink}
       </div>`;
   }
 
@@ -424,6 +468,13 @@ function updateStartBtn(){
   }
 }
 
+function toggleNoGym(el){
+  mvsMode = !mvsMode;
+  el.textContent = mvsMode ? '✓ No-gym mode — pick MVS after START' : 'No gym today';
+  const card = document.getElementById('today-card');
+  if(card) card.style.outline = mvsMode ? '2px solid #fff' : 'none';
+}
+
 function startSession(){
   const {sleep,sore,energy} = readinessAns;
   if(!sleep||!sore||!energy) return;
@@ -432,6 +483,16 @@ function startSession(){
   const cfg = store.get('config');
   const dow = dowKey(today);
   const slotType = cfg ? cfg.schedule[dow] : null;
+
+  // No-gym mode routes to the MVS picker — but a RED reading still owns the
+  // session (hard rule §4: RED = recovery, never a strength circuit).
+  if(mvsMode && r.state!=='RED'){
+    window._weeklyFieldsPending = weeklyFields;
+    saveWeeklyIfSunday();
+    saveBWIfEntered();
+    Nav.toSession({kind:'MVS_PICK', readiness:r});
+    return;
+  }
 
   let variant;
   if(r.state==='RED'){
@@ -478,6 +539,12 @@ let sessionState = null; // working state during a session
 function renderSession(variant){
   sessionState = { variant, work: [], startedAt: Date.now(), restEndAt:null, mode:null, min:null, note:'' };
 
+  if(variant.kind==='MVS_PICK'){
+    return renderMvsPicker(variant);
+  }
+  if(variant.kind==='MVS'){
+    return renderMvsSession(variant);
+  }
   if(variant.kind==='REC'){
     return renderRecSession();
   }
@@ -550,7 +617,8 @@ function logSet(exIdx, setIdx, weight, reps){
   circ.classList.add('logged');
   rchip.textContent = reps;
   sessionState.exercises[exIdx].sets[setIdx] = {weight, reps};
-  startRestTimer(exIdx);
+  const restSec = sessionState.exercises[exIdx].ex.restSec || 90;
+  startRestTimer(restSec);
 }
 
 function editSet(exIdx, setIdx, field){
@@ -593,32 +661,36 @@ function openStepper(startVal, step, onSave){
 }
 
 let restTimerInterval = null;
-function startRestTimer(exIdx){
-  const cfg = store.get('config');
-  const list = sessionState.exercises;
-  // 90s after squat/hinge/push, 60s after rest (i.e. carry/core) per system-design
-  const ex = list[exIdx].ex;
-  const restSec = ex.restSec || 90;
+let restEndAt = null;
+// Rest countdown anchored to an end timestamp. Every repaint computes remaining
+// from Date.now(), so a phone that sleeps mid-rest shows the true time on wake
+// (via renderRestTimer, called by the interval and by refreshTimers).
+function startRestTimer(restSec){
   clearInterval(restTimerInterval);
-  let remaining = restSec;
+  restEndAt = Date.now() + (restSec||60)*1000;
+  if(sessionState) sessionState.restEndAt = restEndAt;
+  renderRestTimer();
+  restTimerInterval = setInterval(renderRestTimer, 250);
+}
+function renderRestTimer(){
   const wrap = document.getElementById('rest-timer-wrap');
-  function render(){
-    const m = Math.floor(remaining/60), s = remaining%60;
-    const cls = remaining<=5 ? 'timer-pill final' : 'timer-pill';
-    wrap.innerHTML = `<div class="card center"><div class="rest-label">Rest</div><div class="${cls}">${m}:${pad(s)}</div></div>`;
-  }
-  render();
-  restTimerInterval = setInterval(()=>{
-    remaining--;
-    if(remaining<0){
-      clearInterval(restTimerInterval);
-      wrap.innerHTML='';
+  if(!wrap || restEndAt==null) return;
+  const remaining = Math.round((restEndAt - Date.now())/1000);
+  if(remaining<=0){
+    clearInterval(restTimerInterval); restTimerInterval=null;
+    const justExpired = remaining > -3; // don't fire a stale beep on wake long after
+    restEndAt = null;
+    if(sessionState) sessionState.restEndAt = null;
+    wrap.innerHTML='';
+    if(justExpired){
       if(navigator.vibrate) navigator.vibrate([200,100,200]);
       beep();
-      return;
     }
-    render();
-  },1000);
+    return;
+  }
+  const m = Math.floor(remaining/60), s = remaining%60;
+  const cls = remaining<=5 ? 'timer-pill final' : 'timer-pill';
+  wrap.innerHTML = `<div class="card center"><div class="rest-label">Rest</div><div class="${cls}">${m}:${pad(s)}</div></div>`;
 }
 function beep(){
   try{
@@ -631,7 +703,7 @@ function beep(){
 }
 
 function finishStrengthSession(){
-  clearInterval(restTimerInterval);
+  clearInterval(restTimerInterval); restTimerInterval=null; restEndAt=null;
   const work = sessionState.exercises.map(row=>({
     ex: row.ex.id,
     target: `${row.ex.sets||3}x${row.ex.repLo}-${row.ex.repHi}@${row.weight||row.ex.startWeight||0}`,
@@ -648,6 +720,7 @@ function finishStrengthSession(){
 }
 
 function renderCardioSession(variant){
+  cardioTimer.reset();
   const cfg = store.get('config');
   const menu = (cfg && cfg.cardioMenu) || ['incline_walk','bike','rower','stairs'];
   const defaultMin = variant.degraded ? 20 : 35;
@@ -680,25 +753,11 @@ function labelMode(m){
   const map={incline_walk:'Incline walk', bike:'Bike', rower:'Rower', stairs:'Stairs'};
   return map[m]||m;
 }
-let cardioInterval=null, cardioSeconds=0, cardioRunning=false;
-function toggleCardioTimer(){
-  const btn = document.getElementById('cardio-toggle');
-  cardioRunning = !cardioRunning;
-  btn.textContent = cardioRunning ? 'PAUSE' : 'RESUME';
-  if(cardioRunning){
-    cardioInterval = setInterval(()=>{
-      cardioSeconds++;
-      const el = document.getElementById('cardio-timer');
-      if(el) el.textContent = `${pad(Math.floor(cardioSeconds/60))}:${pad(cardioSeconds%60)}`;
-    },1000);
-  } else {
-    clearInterval(cardioInterval);
-  }
-}
+function toggleCardioTimer(){ cardioTimer.toggle(); }
 function finishCardioSession(defaultMin){
-  clearInterval(cardioInterval);
+  cardioTimer.stop();
   const mode = document.getElementById('cardio-mode').value;
-  const minutes = cardioSeconds>0 ? Math.round(cardioSeconds/60) : defaultMin;
+  const minutes = cardioTimer.elapsedSec()>0 ? cardioTimer.minutes() : defaultMin;
   const draft = {
     date: todayStr(),
     slot: 'C',
@@ -706,11 +765,12 @@ function finishCardioSession(defaultMin){
     work: [{mode, min: minutes}],
     startedAt: sessionState.startedAt
   };
-  cardioSeconds=0; cardioRunning=false;
+  cardioTimer.reset();
   Nav.toFinish(draft);
 }
 
 function renderRecSession(){
+  recTimer.reset();
   const mobility = ['Cat-cow x10','World\'s greatest stretch x6/side','Band pull-apart x15','Hip 90/90 x8/side','Wall slide x10'];
   const items = mobility.map(m=>`
     <div class="set-row">
@@ -741,22 +801,10 @@ function renderRecSession(){
     </div></div>
   `;
 }
-let recInterval=null, recSeconds=0, recRunning=false;
-function toggleRecTimer(){
-  const btn = document.getElementById('rec-toggle');
-  recRunning = !recRunning;
-  btn.textContent = recRunning ? 'PAUSE' : 'RESUME';
-  if(recRunning){
-    recInterval = setInterval(()=>{
-      recSeconds++;
-      const el = document.getElementById('rec-timer');
-      if(el) el.textContent = `${pad(Math.floor(recSeconds/60))}:${pad(recSeconds%60)}`;
-    },1000);
-  } else clearInterval(recInterval);
-}
+function toggleRecTimer(){ recTimer.toggle(); }
 function finishRecSession(){
-  clearInterval(recInterval);
-  const minutes = recSeconds>0 ? Math.round(recSeconds/60) : 20;
+  recTimer.stop();
+  const minutes = recTimer.elapsedSec()>0 ? recTimer.minutes() : 20;
   const draft = {
     date: todayStr(),
     slot: 'REC',
@@ -764,7 +812,132 @@ function finishRecSession(){
     work: [{mode:'recovery', min: minutes}],
     startedAt: sessionState.startedAt
   };
-  recSeconds=0; recRunning=false;
+  recTimer.reset();
+  Nav.toFinish(draft);
+}
+
+/* ================= MVS (minimum viable session) ================= */
+// Reached from a strength day's "No gym today" link. Readiness is answered
+// first (same as any session); the picker then chooses the tier. All three
+// tiers log slot:"MVS" with mvsType and count identically toward streak,
+// consistency, and the §4 MVS rules. Outdoor logs no work array.
+function renderMvsPicker(variant){
+  return `
+    <div class="screen active">
+      <div class="flex-between mt8" style="margin-bottom:12px;">
+        <h1 class="title" style="margin-bottom:0;">No Gym</h1>
+        <span class="badge neutral">MVS</span>
+      </div>
+      <div class="card"><div class="sub">Pick a minimum session. Each counts as a full completion — no makeups, no penalty.</div></div>
+      <button class="pill-btn accent mt12" onclick="pickMvs('gym')">GYM CIRCUIT</button>
+      <button class="pill-btn accent mt12" onclick="pickMvs('travel')">TRAVEL / BODYWEIGHT</button>
+      <button class="pill-btn accent mt12" onclick="pickMvs('outdoor')">OUTDOOR WALK</button>
+      <div class="microcopy mt16 center">Gym and Travel are short circuits. Outdoor is a 20-min walk.</div>
+    </div>`;
+}
+function pickMvs(type){
+  const r = sessionState && sessionState.variant ? sessionState.variant.readiness : null;
+  Nav.toSession({kind:'MVS', mvsType:type, readiness:r});
+}
+
+function renderMvsSession(variant){
+  if(variant.mvsType==='outdoor') return renderMvsOutdoor(variant);
+  return renderMvsCircuit(variant);
+}
+
+function mvsTargetText(it){
+  if(it.durationMin!=null) return `${it.durationMin} min walk`;
+  if(it.durationSec!=null) return `${it.durationSec}s hold`;
+  if(it.trips!=null) return `${it.trips} trips${it.weight!=null?` @ ${it.weight} lb`:''}`;
+  if(it.reps!=null) return `${it.reps} reps${it.weight!=null?` @ ${it.weight} lb`:''}`;
+  return '';
+}
+function renderMvsCircuit(variant){
+  const cfg = store.get('config');
+  const list = (variant.mvsType==='gym' ? (cfg&&cfg.mvsGym) : (cfg&&cfg.mvsTravel)) || [];
+  sessionState.mvsItems = list.map(it=>({ id:it.id, name:it.name, target:mvsTargetText(it), sets: it.sets||1 }));
+  const label = variant.mvsType==='gym' ? 'MVS — GYM' : 'MVS — TRAVEL';
+  const html = sessionState.mvsItems.map((it,i)=>{
+    let rows='';
+    for(let s=0;s<it.sets;s++){
+      rows += `
+        <div class="set-row">
+          <button class="tap-circle" id="mcirc-${i}-${s}" onclick="logMvsSet(${i},${s})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>
+          </button>
+          <span class="set-num">${s+1}</span>
+          <span class="spacer"></span>
+          <span class="row">${it.target}</span>
+        </div>`;
+    }
+    return `<div class="card ex-card"><div class="card-header"><div class="card-title">${it.name}</div></div>${rows}</div>`;
+  }).join('');
+  return `
+    <div class="screen active" style="padding-bottom:100px;">
+      <div class="flex-between mt8" style="margin-bottom:12px;">
+        <h1 class="title" style="margin-bottom:0;">MVS</h1>
+        <span class="badge neutral">${label}</span>
+      </div>
+      <div id="rest-timer-wrap"></div>
+      ${html}
+      <div class="microcopy mt8 center">Effort cap RPE 6–7. No progression.</div>
+    </div>
+    <div class="sticky-bar"><div class="sticky-bar-inner">
+      <button class="pill-btn accent" onclick="finishMvsCircuit()">FINISH SESSION</button>
+    </div></div>`;
+}
+function logMvsSet(i,s){
+  const circ = document.getElementById(`mcirc-${i}-${s}`);
+  if(!circ) return;
+  circ.classList.add('logged');
+  startRestTimer(60);
+}
+function finishMvsCircuit(){
+  clearInterval(restTimerInterval); restTimerInterval=null; restEndAt=null;
+  const work = (sessionState.mvsItems||[]).map(it=>({ex:it.id, target:it.target}));
+  const draft = {
+    date: todayStr(),
+    slot: 'MVS',
+    mvsType: sessionState.variant.mvsType,
+    readiness: sessionState.variant.readiness,
+    work,
+    startedAt: sessionState.startedAt
+  };
+  Nav.toFinish(draft);
+}
+
+function renderMvsOutdoor(variant){
+  outdoorTimer.reset();
+  return `
+    <div class="screen active" style="padding-bottom:100px;">
+      <div class="flex-between mt8" style="margin-bottom:12px;">
+        <h1 class="title" style="margin-bottom:0;">Outdoor</h1>
+        <span class="badge neutral">MVS — OUTDOOR</span>
+      </div>
+      <div class="card center">
+        <div class="card-title" style="font-size:17px;">Brisk walk</div>
+        <div class="timer-pill mt8" id="outdoor-timer">00:00</div>
+        <div class="mt16"><button class="pill-btn accent small" id="outdoor-toggle" onclick="toggleOutdoorTimer()">START</button></div>
+        <div class="microcopy mt12">20-min minimum · easy — RPE 5 or under.</div>
+      </div>
+    </div>
+    <div class="sticky-bar"><div class="sticky-bar-inner">
+      <button class="pill-btn accent" onclick="finishMvsOutdoor()">FINISH SESSION</button>
+    </div></div>`;
+}
+function toggleOutdoorTimer(){ outdoorTimer.toggle(); }
+function finishMvsOutdoor(){
+  outdoorTimer.stop();
+  const minutes = outdoorTimer.elapsedSec()>0 ? outdoorTimer.minutes() : 20;
+  const draft = {
+    date: todayStr(),
+    slot: 'MVS',
+    mvsType: 'outdoor',
+    readiness: sessionState.variant.readiness,
+    min: minutes,          // outdoor has no work array; the walk time is the whole session
+    startedAt: sessionState.startedAt
+  };
+  outdoorTimer.reset();
   Nav.toFinish(draft);
 }
 
@@ -772,7 +945,9 @@ function finishRecSession(){
 let finishDraft = null;
 function renderFinish(draft){
   finishDraft = draft;
-  const elapsedMin = Math.max(1, Math.round((Date.now()-draft.startedAt)/60000));
+  const elapsedMin = draft.min!=null
+    ? draft.min
+    : Math.max(1, Math.round((Date.now()-draft.startedAt)/60000));
   let rpeDots='';
   for(let i=1;i<=10;i++){
     rpeDots += `<button class="dot" style="width:36px;height:36px;font-size:14px;" data-rpe="${i}" onclick="setRPE(${i})">${i}</button>`;
@@ -815,6 +990,7 @@ function saveSession(elapsedMin){
     min: elapsedMin,
     note
   };
+  if(finishDraft.mvsType) rec.mvsType = finishDraft.mvsType; // gym|travel|outdoor
   sessions.push(rec);
   store.set('sessions', sessions);
 
