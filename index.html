@@ -167,7 +167,7 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
 
 <script>
 'use strict';
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 /* ---------- Storage adapter ---------- */
 const store = {
@@ -936,7 +936,7 @@ function renderSettings(){
       <h1 class="title">Settings</h1>
       <div class="card">
         <div class="card-title" style="font-size:17px;margin-bottom:8px;">Import Program</div>
-        <textarea class="wos-textarea" id="import-textarea" placeholder="Paste config JSON from wos-program"></textarea>
+        <input type="file" id="import-file" accept="application/json" class="mt8">
         <button class="pill-btn accent small mt12" onclick="importProgram()">IMPORT</button>
       </div>
       <div class="card">
@@ -966,8 +966,13 @@ function renderSettings(){
 }
 
 function importProgram(){
-  const raw = document.getElementById('import-textarea').value.trim();
-  if(!raw) return;
+  const fileInput = document.getElementById('import-file');
+  if(!fileInput.files || !fileInput.files[0]){ alertMsg('Choose a file first.'); return; }
+  const reader = new FileReader();
+  reader.onload = (e)=>{ applyProgramImport(e.target.result); };
+  reader.readAsText(fileInput.files[0]);
+}
+function applyProgramImport(raw){
   let cfg;
   try{ cfg = JSON.parse(raw); }catch(e){ alertMsg('Invalid JSON.'); return; }
   if(!cfg.schedule || !cfg.workouts){ alertMsg('Config missing schedule/workouts.'); return; }
