@@ -169,7 +169,7 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
 
 <script>
 'use strict';
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.5.2';
 
 /* ---------- wall-clock timers ----------
    All in-session timers derive their value from Date.now() timestamps, never
@@ -1093,6 +1093,7 @@ function renderCardioSession(variant){
           <button class="pill-btn accent small" id="cardio-toggle" onclick="toggleCardioTimer()">START</button>
         </div>
       </div>
+      ${manualTimeCard()}
     </div>
     <div class="sticky-bar"><div class="sticky-bar-inner">
       <button class="pill-btn accent" onclick="finishCardioSession(${defaultMin})">FINISH SESSION</button>
@@ -1103,15 +1104,45 @@ function labelMode(m){
   const map={incline_walk:'Incline walk', bike:'Bike', rower:'Rower', stairs:'Stairs'};
   return map[m]||m;
 }
+
+/* Typed duration, offered on every timed screen alongside the timer.
+   [Running a timer is one way to know how long something took; it is not the
+   only way, and it is often not available — phone in a pocket, walk already
+   finished, machine's own display, a session logged after the fact. A screen
+   whose only affordance is START forces a clock to be re-run for a walk that
+   already happened.] A typed value always beats the timer. */
+function manualTimeCard(){
+  const v = (sessionState && sessionState.min!=null) ? sessionState.min : '';
+  return `
+    <div class="card">
+      <div class="card-title" style="font-size:17px;margin-bottom:8px;">Or type the time</div>
+      <div class="bw-row">
+        <input type="number" inputmode="numeric" id="session-min" class="bw-input"
+               placeholder="min" value="${v}" oninput="setSessionMin(this.value)">
+        <span class="bw-avg">minutes</span>
+      </div>
+      <div class="microcopy mt8">Skip the timer entirely — whatever you type here is what gets logged.</div>
+    </div>`;
+}
+function setSessionMin(v){
+  if(!sessionState) return;
+  const n = parseInt(v);
+  sessionState.min = (v==='' || isNaN(n)) ? null : n;
+  persistActive('session');
+}
+/* Resolve a session's duration: typed value wins, then the timer, then the default. */
+function resolveMinutes(timer, fallback){
+  if(sessionState && sessionState.min!=null) return sessionState.min;
+  if(timer && timer.elapsedSec()>0) return timer.minutes();
+  return fallback;
+}
 function setCardioMode(v){ if(sessionState){ sessionState.mode = v; persistActive('session'); } }
 function toggleCardioTimer(){ cardioTimer.toggle(); persistActive('session'); }
 function finishCardioSession(defaultMin){
   cardioTimer.stop();
   const el = document.getElementById('cardio-mode');
   const mode = el ? el.value : (sessionState.mode||'incline_walk');
-  const minutes = cardioTimer.elapsedSec()>0
-    ? cardioTimer.minutes()
-    : (sessionState.min!=null ? sessionState.min : defaultMin);   // keep the edited record's duration
+  const minutes = resolveMinutes(cardioTimer, defaultMin);
   const draft = {
     date: sessionState.date || todayStr(),
     slot: 'C',
@@ -1152,6 +1183,7 @@ function renderRecSession(){
         <div class="mt16"><button class="pill-btn accent small" id="rec-toggle" onclick="toggleRecTimer()">START</button></div>
         <div class="microcopy mt12">12–15 min target</div>
       </div>
+      ${manualTimeCard()}
       <div class="card">
         <div class="card-title" style="font-size:17px;margin-bottom:8px;">Mobility circuit</div>
         ${items}
@@ -1170,7 +1202,7 @@ function toggleRecCheck(i, el){
 function toggleRecTimer(){ recTimer.toggle(); persistActive('session'); }
 function finishRecSession(){
   recTimer.stop();
-  const minutes = recTimer.elapsedSec()>0 ? recTimer.minutes() : 20;
+  const minutes = resolveMinutes(recTimer, 20);
   const draft = {
     date: sessionState.date || todayStr(),
     slot: 'REC',
@@ -1305,6 +1337,7 @@ function renderMvsOutdoor(variant){
         <div class="mt16"><button class="pill-btn accent small" id="outdoor-toggle" onclick="toggleOutdoorTimer()">START</button></div>
         <div class="microcopy mt12">20-min minimum · easy — RPE 5 or under.</div>
       </div>
+      ${manualTimeCard()}
     </div>
     <div class="sticky-bar"><div class="sticky-bar-inner">
       <button class="pill-btn accent" onclick="finishMvsOutdoor()">FINISH SESSION</button>
@@ -1313,7 +1346,7 @@ function renderMvsOutdoor(variant){
 function toggleOutdoorTimer(){ outdoorTimer.toggle(); persistActive('session'); }
 function finishMvsOutdoor(){
   outdoorTimer.stop();
-  const minutes = outdoorTimer.elapsedSec()>0 ? outdoorTimer.minutes() : 20;
+  const minutes = resolveMinutes(outdoorTimer, 20);
   const draft = {
     date: sessionState.date || todayStr(),
     slot: 'MVS',

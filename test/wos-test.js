@@ -684,12 +684,124 @@ console.log('\n== 23. Duration is editable on every session, timer or not ==');
 }
 
 /* ---------------------------------------------------------------- */
-console.log('\n== 24. Hygiene ==');
+console.log('\n== 24. Time can be typed on the session screen itself ==');
+{
+  // the reported case: walked 38 min, never touched the timer
+  const dom = boot(SUN, { config: CONFIG });
+  const w = dom.window;
+  w.Nav.home();
+  w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
+  w.startSession();
+  const f = w.document.getElementById('session-min');
+  ok('cardio screen offers a typed-time field', !!f);
+  ok('field is reachable without starting the timer', /Or type the time/.test(txt(dom)));
+  w.setSessionMin('38');
+  eq('typed value held in session state', w.sessionState.min, 38);
+  eq('typed value persisted for crash recovery', storeOf(dom, 'active').min, 38);
+  w.finishCardioSession(35);
+  eq('typed value beats the slot default', w.document.getElementById('finish-min').value, '38');
+  w.setRPE(4);
+  w.saveSession(35);
+  const s = storeOf(dom, 'sessions')[0];
+  eq('typed duration is what got logged', s.min, 38);
+  eq('work[0].min agrees', s.work[0].min, 38);
+  dom.window.close();
+}
+{
+  // typed value must beat a running timer too, not just the default
+  const dom = boot(MON, { config: CONFIG });
+  const w = dom.window;
+  w.Nav.home();
+  w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
+  w.mvsMode = true; w.startSession(); w.pickMvs('outdoor');
+  ok('outdoor screen offers a typed-time field', !!w.document.getElementById('session-min'));
+  w.toggleOutdoorTimer();
+  w.__clockOffset = 8 * 60 * 1000;          // timer says 8
+  w.setSessionMin('31');                     // but the walk was really 31
+  w.finishMvsOutdoor();
+  w.setRPE(4);
+  w.saveSession(8);
+  eq('typed value overrides a running timer', storeOf(dom, 'sessions')[0].min, 31);
+  dom.window.close();
+}
+{
+  // clearing the field falls back to the timer rather than logging nothing
+  const dom = boot(MON, { config: CONFIG });
+  const w = dom.window;
+  w.Nav.home();
+  w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
+  w.mvsMode = true; w.startSession(); w.pickMvs('outdoor');
+  w.toggleOutdoorTimer();
+  w.__clockOffset = 22 * 60 * 1000;
+  w.setSessionMin('31');
+  w.setSessionMin('');                       // changed his mind, cleared it
+  eq('cleared field returns to null, not NaN', w.sessionState.min, null);
+  w.finishMvsOutdoor();
+  w.setRPE(4);
+  w.saveSession(22);
+  eq('falls back to the timer', storeOf(dom, 'sessions')[0].min, 22);
+  dom.window.close();
+}
+{
+  // recovery screen too
+  const dom = boot(MON, { config: CONFIG });
+  const w = dom.window;
+  w.Nav.home();
+  w.setReadiness('sleep', 5); w.setReadiness('sore', 1); w.setReadiness('energy', 5);
+  w.startSession();
+  ok('recovery screen offers a typed-time field', !!w.document.getElementById('session-min'));
+  w.setSessionMin('17');
+  w.finishRecSession();
+  w.setRPE(3);
+  w.saveSession(20);
+  const s = storeOf(dom, 'sessions')[0];
+  eq('recovery typed duration logged', s.min, 17);
+  eq('recovery work[0].min agrees', s.work[0].min, 17);
+  dom.window.close();
+}
+{
+  // a typed time must survive the refresh that started all of this
+  const dom = boot(SUN, { config: CONFIG });
+  const w = dom.window;
+  w.Nav.home();
+  w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
+  w.startSession();
+  w.setCardioMode('rower');
+  w.setSessionMin('44');
+  const seed = dump(dom);
+  dom.window.close();
+
+  const dom2 = boot(SUN, seed);
+  dom2.window.resumeActive();
+  eq('typed time restored into the field', dom2.window.document.getElementById('session-min').value, '44');
+  eq('mode restored alongside it', dom2.window.document.getElementById('cardio-mode').value, 'rower');
+  dom2.window.close();
+}
+{
+  // editing a past walk pre-fills its recorded time instead of resetting it
+  const seeded = [{ date: '2026-07-24', slot: 'MVS', mvsType: 'outdoor', readiness: null,
+    min: 42, rpe: 4, note: '' }];
+  const dom = boot(MON, { config: CONFIG, sessions: seeded });
+  const w = dom.window;
+  w.Nav.toManual({ editingIndex: 0 });
+  await tick();
+  eq('past walk time pre-filled', w.document.getElementById('session-min').value, '42');
+  w.setSessionMin('46');
+  w.finishMvsOutdoor();
+  w.setRPE(4);
+  w.saveSession(42);
+  eq('corrected walk time saved', storeOf(dom, 'sessions')[0].min, 46);
+  eq('no duplicate record', storeOf(dom, 'sessions').length, 1);
+  dom.window.close();
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\n== 25. Hygiene ==');
 {
   eq('no console errors across the suite', consoleErrors, []);
   eq('zero network requests after load', netRequests, []);
   const html = HTML;
-  ok('APP_VERSION bumped to 1.5.1', /const APP_VERSION = '1\.5\.1'/.test(html));
+  ok('APP_VERSION bumped to 1.5.2', /const APP_VERSION = '1\.5\.2'/.test(html));
   ok('no webfonts or CDN links', !/https?:\/\/(fonts|cdn)/i.test(html));
   ok('no leftover manual-min references', !/manual-min/.test(html));
 }
