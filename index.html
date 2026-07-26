@@ -236,7 +236,7 @@ function ensureInit(){
   if(!store.get('daily')) store.set('daily', []);
   if(!store.get('weekly')) store.set('weekly', []);
   if(!store.get('config')) store.set('config', null);
-  if(store.get('active')===null && localStorage.getItem('wos.active')===null) store.set('active', null);
+  if(localStorage.getItem('wos.active')===null) store.set('active', null);
 }
 
 /* ---------- replay engine ----------
