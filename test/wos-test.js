@@ -316,15 +316,93 @@ console.log('\n== 12. Consistency denominator computed from schedule ==');
 {
   const dom = boot(MON, { config: CONFIG, meta: { startDate: '2026-06-01', appVersion: '1.5.0', lastBackup: null } });
   const w = dom.window;
-  // schedule is 6 training days/week -> 28 days trailing = 24
-  eq('28-day scheduled count from schedule', w.scheduledCountLast28(), 24);
-  ok('denominator is not the old literal path', w.renderProgress().includes('of 24 scheduled'));
+  // 6 training days/week over a trailing 28-day window = 24, less today (Monday,
+  // a training day) while it is still unlogged -> 23. See v1.5.3.
+  eq('28-day scheduled count from schedule, today unlogged', w.scheduledCountLast28(), 23);
+  ok('denominator is not the old literal path', w.renderProgress().includes('of 23 scheduled'));
   dom.window.close();
 
   // a start date inside the window must shrink the denominator, not report 24
   const dom2 = boot(MON, { config: CONFIG, meta: { startDate: '2026-07-20', appVersion: '1.5.0', lastBackup: null } });
   ok('partial history reports honestly', dom2.window.scheduledCountLast28() < 24);
   dom2.window.close();
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\n== 12b. v1.5.3 — today is not a miss until it is over ==');
+{
+  // Monday, a scheduled strength day, nothing logged yet.
+  const meta = { startDate: '2026-06-01', appVersion: '1.5.3', lastBackup: null };
+  const dom = boot(MON, { config: CONFIG, meta });
+  eq('unlogged today excluded from denominator', dom.window.scheduledCountLast28(), 23);
+  dom.window.close();
+
+  // Same Monday, today logged -> it re-enters the denominator.
+  const dom2 = boot(MON, {
+    config: CONFIG, meta,
+    sessions: [{ date: '2026-07-27', slot: 'A', readiness: null, rpe: 6, min: 45, work: [] }]
+  });
+  eq('logged today re-enters denominator', dom2.window.scheduledCountLast28(), 24);
+  dom2.window.close();
+
+  // A rest day (Saturday) is never in the denominator, logged or not.
+  const dom3 = boot('2026-07-25T09:00:00', { config: CONFIG, meta });
+  const before = dom3.window.scheduledCountLast28();
+  dom3.window.close();
+  const dom4 = boot('2026-07-25T09:00:00', {
+    config: CONFIG, meta,
+    sessions: [{ date: '2026-07-25', slot: 'C', readiness: null, rpe: 4, min: 30, work: [] }]
+  });
+  eq('rest day never enters the denominator', dom4.window.scheduledCountLast28(), before);
+  dom4.window.close();
+
+  // The ratio carries its window instead of reading like a weekly target.
+  const dom5 = boot(SUN, { config: CONFIG, meta });
+  ok('ratio label carries the 4-week window', /scheduled\s*·\s*last 4 weeks/.test(dom5.window.renderProgress().replace(/&middot;/g, '·')));
+  dom5.window.close();
+
+  // Shorter history than the window says so, rather than implying 4 weeks of data.
+  const dom6 = boot(SUN, { config: CONFIG, meta: { startDate: '2026-07-19', appVersion: '1.5.3', lastBackup: null } });
+  ok('short history labels its real start', /scheduled\s*·\s*since Jul 19/.test(dom6.window.renderProgress().replace(/&middot;/g, '·')));
+  dom6.window.close();
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\n== 12c. v1.5.3 — a prescribed rest day does not break the streak ==');
+{
+  const meta = { startDate: '2026-07-19', appVersion: '1.5.3', lastBackup: null };
+  const week1 = [
+    { date: '2026-07-19', slot: 'C', readiness: null, rpe: 5, min: 42, work: [] },
+    { date: '2026-07-20', slot: 'MVS', readiness: null, rpe: 5, min: 36, mvsType: 'outdoor' },
+    { date: '2026-07-21', slot: 'C', readiness: null, rpe: 5, min: 40, work: [] },
+    { date: '2026-07-22', slot: 'MVS', readiness: null, rpe: 5, min: 42, mvsType: 'outdoor' },
+    { date: '2026-07-23', slot: 'MVS', readiness: null, rpe: 5, min: 42, mvsType: 'outdoor' },
+    { date: '2026-07-24', slot: 'C', readiness: null, rpe: 5, min: 30, work: [] }
+  ];
+  // Joel's real week 1: six days trained, Saturday 07-25 rest, Sunday 07-26 not
+  // yet logged. This read 0 before v1.5.3 — the rest day stopped the walk.
+  const dom = boot(SUN, { config: CONFIG, meta, sessions: week1 });
+  eq('streak steps over the rest day', dom.window.currentStreak(), 6);
+  dom.window.close();
+
+  // Standing on the rest day itself, with nothing logged that day.
+  const domSat = boot('2026-07-25T09:00:00', { config: CONFIG, meta, sessions: week1 });
+  eq('streak holds on Saturday', domSat.window.currentStreak(), 6);
+  domSat.window.close();
+
+  // A genuinely missed scheduled day still ends the streak.
+  const gapped = week1.filter(s => s.date !== '2026-07-22');
+  const domGap = boot(SUN, { config: CONFIG, meta, sessions: gapped });
+  eq('a missed scheduled day still breaks it', domGap.window.currentStreak(), 2);
+  domGap.window.close();
+
+  // The walk stops at startDate rather than running off the end of history.
+  const domStart = boot('2026-07-20T09:00:00', {
+    config: CONFIG, meta,
+    sessions: [week1[0], week1[1]]
+  });
+  eq('walk terminates at startDate', domStart.window.currentStreak(), 2);
+  domStart.window.close();
 }
 
 /* ---------------------------------------------------------------- */
@@ -801,7 +879,7 @@ console.log('\n== 25. Hygiene ==');
   eq('no console errors across the suite', consoleErrors, []);
   eq('zero network requests after load', netRequests, []);
   const html = HTML;
-  ok('APP_VERSION bumped to 1.5.2', /const APP_VERSION = '1\.5\.2'/.test(html));
+  ok('APP_VERSION bumped to 1.5.3', /const APP_VERSION = '1\.5\.3'/.test(html));
   ok('no webfonts or CDN links', !/https?:\/\/(fonts|cdn)/i.test(html));
   ok('no leftover manual-min references', !/manual-min/.test(html));
 }

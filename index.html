@@ -169,7 +169,7 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
 
 <script>
 'use strict';
-const APP_VERSION = '1.5.2';
+const APP_VERSION = '1.5.3';
 
 /* ---------- wall-clock timers ----------
    All in-session timers derive their value from Date.now() timestamps, never
@@ -338,6 +338,10 @@ function fmtDateHeader(dateStr){
   const opts={weekday:'long', month:'long', day:'numeric'};
   return d.toLocaleDateString('en-US',opts);
 }
+function fmtShortDate(dateStr){
+  const d=new Date(dateStr+'T12:00:00');
+  return d.toLocaleDateString('en-US',{month:'short', day:'numeric'});
+}
 function addDays(dateStr,n){
   const d=new Date(dateStr+'T12:00:00'); d.setDate(d.getDate()+n);
   return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
@@ -380,29 +384,55 @@ function nextStrengthLetter(before){
 }
 /* Scheduled sessions across the trailing 28 days, computed from config.schedule.
    [A hardcoded denominator misreports a partial history or a changed schedule,
-   and manual entry plus delete both move the numerator.] */
+   and manual entry plus delete both move the numerator.]
+   Today enters the denominator only once it has been logged. [An unlogged
+   training day is not a missed one until it is over; counting it early made
+   consistency read low all day and snap up at night, which is a display that
+   punishes you for the hours before your session.] */
 function scheduledCountLast28(){
   const cfg = store.get('config');
   if(!cfg || !cfg.schedule) return 0;
   const meta = store.get('meta') || {};
   const start = meta.startDate || todayStr();
+  const today = todayStr();
+  const loggedToday = (store.get('sessions') || [])
+    .some(s => s.date === today && s.slot !== 'SKIP');
   let n = 0;
   for(let i=0;i<28;i++){
-    const d = addDays(todayStr(), -i);
+    const d = addDays(today, -i);
     if(d < start) continue;                      // don't count days before the system existed
+    if(d === today && !loggedToday) continue;    // today isn't a miss until it's over
     const slot = cfg.schedule[dowKey(d)];
     if(slot && slot!=='REST') n++;
   }
   return n;
 }
+/* Consecutive *scheduled* days completed. REST days are stepped over: they
+   neither break the streak nor add to it. [system-design §1 prescribes Saturday
+   rest, so a streak a rest day can break is measuring the wrong thing — it read
+   0 every Saturday and again every Sunday until logging, on the Home screen, on
+   an adherence-first system. A skipped scheduled day still ends it.]
+   Days before meta.startDate stop the walk; there is no history back there. */
 function currentStreak(){
+  const cfg = store.get('config');
   const sessions = store.get('sessions') || [];
+  const meta = store.get('meta') || {};
+  const start = meta.startDate || todayStr();
   const byDate = {};
   sessions.forEach(s=>{ if(s.slot!=='SKIP') byDate[s.date]=true; });
+  const isRest = d => {
+    if(!cfg || !cfg.schedule) return false;
+    const slot = cfg.schedule[dowKey(d)];
+    return !slot || slot==='REST';
+  };
   let streak=0, d=todayStr();
   // if today not logged yet, start checking from yesterday
   if(!byDate[d]) d = addDays(d,-1);
-  while(byDate[d]){ streak++; d=addDays(d,-1); }
+  while(d >= start){
+    if(isRest(d)){ d = addDays(d,-1); continue; }  // rest days are stepped over
+    if(!byDate[d]) break;                          // a missed scheduled day ends it
+    streak++; d = addDays(d,-1);
+  }
   return streak;
 }
 function weekSessionsCount(){
@@ -1688,7 +1718,9 @@ function renderProgress(){
   const weekly = (store.get('weekly')||[]).slice().sort((a,b)=>a.weekOf<b.weekOf?-1:1);
 
   // 4-week consistency
-  const since = addDays(todayStr(), -28);
+  // Window is the same 28 days the denominator walks (today-27..today) — the two
+  // used to disagree by a day, which let one extra session into the numerator.
+  const since = addDays(todayStr(), -27);
   const recent = sessions.filter(s=>s.date>=since && s.slot!=='SKIP');
   // Denominator computed from the schedule, not hardcoded — a partial history,
   // a changed schedule, or a deleted session all have to report honestly.
@@ -1697,6 +1729,13 @@ function renderProgress(){
     ? Math.min(100, Math.round((recent.length/scheduledCount)*100))
     : 0;
   const streak = currentStreak();
+  // The bare ratio read like a weekly target ("6 of 7" → "am I meant to train
+  // 7 days?"). It carries its window now, and says so honestly when the history
+  // is shorter than the window.
+  const progMeta = store.get('meta') || {};
+  const windowLabel = (progMeta.startDate && progMeta.startDate > since)
+    ? 'since ' + fmtShortDate(progMeta.startDate)
+    : 'last 4 weeks';
 
   const bwSpark = sparkline(daily.slice(-56).map(d=>({x:d.date,y:d.bw})), '--accent');
   const waistSpark = sparkline(weekly.slice(-8).map(w=>({x:w.weekOf,y:w.waist})), '--accent');
@@ -1729,7 +1768,7 @@ function renderProgress(){
           <div class="stat-block"><div class="stat-label">4-wk consistency</div><div class="stat-value">${consistency}%</div></div>
           <div class="stat-block"><div class="stat-label">Streak</div><div class="stat-value">${streak}</div></div>
         </div>
-        <div class="microcopy mt8 center">${recent.length} of ${scheduledCount} scheduled</div>
+        <div class="microcopy mt8 center">${recent.length} of ${scheduledCount} scheduled &middot; ${windowLabel}</div>
       </div>
       <button class="pill-btn ghost" onclick="Nav.toHistory()">VIEW &amp; EDIT HISTORY</button>
       <div class="card">
