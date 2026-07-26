@@ -608,12 +608,88 @@ console.log('\n== 22. Timer state cannot leak between sessions ==');
 }
 
 /* ---------------------------------------------------------------- */
-console.log('\n== 23. Hygiene ==');
+console.log('\n== 23. Duration is editable on every session, timer or not ==');
+{
+  // walked without ever starting the timer -> must still be able to say 38 min
+  const dom = boot(SUN, { config: CONFIG });          // Sunday = cardio day
+  const w = dom.window;
+  w.Nav.home();
+  w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
+  w.startSession();
+  ok('cardio session opened', !!w.document.getElementById('cardio-mode'));
+  w.finishCardioSession(35);                          // timer never started
+  const fm = w.document.getElementById('finish-min');
+  ok('duration field editable on a live session', !!fm);
+  eq('seeded from the default', fm.value, '35');
+  ok('microcopy invites correction', /change it if that's not right/.test(txt(dom)));
+  fm.value = '38';
+  w.setRPE(4);
+  w.saveSession(35);
+  const s = storeOf(dom, 'sessions')[0];
+  eq('typed duration saved', s.min, 38);
+  eq('work[0].min synced to the typed duration', s.work[0].min, 38);
+  ok('correcting a duration does NOT flag the session manual', !s.manual);
+  dom.window.close();
+}
+{
+  // the timer ran, but the real walk was longer than what got recorded
+  const dom = boot(MON, { config: CONFIG });
+  const w = dom.window;
+  w.Nav.home();
+  w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
+  w.mvsMode = true; w.startSession(); w.pickMvs('outdoor');
+  w.toggleOutdoorTimer();
+  w.__clockOffset = 12 * 60 * 1000;
+  w.finishMvsOutdoor();
+  eq('seeded from the timer', w.document.getElementById('finish-min').value, '12');
+  w.document.getElementById('finish-min').value = '25';
+  w.setRPE(4);
+  w.saveSession(12);
+  eq('outdoor duration overridable', storeOf(dom, 'sessions')[0].min, 25);
+  dom.window.close();
+}
+{
+  // strength: duration comes from elapsed time and must also be correctable
+  const dom = boot(MON, { config: CONFIG });
+  const w = dom.window;
+  w.Nav.home();
+  w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
+  w.startSession();
+  w.logSet(0, 0, 30, 10);
+  w.finishStrengthSession();
+  const fm = w.document.getElementById('finish-min');
+  ok('strength duration editable too', !!fm);
+  fm.value = '52';
+  w.setRPE(6);
+  w.saveSession(1);
+  eq('strength duration honoured', storeOf(dom, 'sessions')[0].min, 52);
+  ok('strength work untouched by the min sync', Array.isArray(storeOf(dom, 'sessions')[0].work[0].sets));
+  dom.window.close();
+}
+{
+  // recovery carries min in work[0] as well
+  const dom = boot(MON, { config: CONFIG });
+  const w = dom.window;
+  w.Nav.home();
+  w.setReadiness('sleep', 5); w.setReadiness('sore', 1); w.setReadiness('energy', 5);
+  w.startSession();
+  w.finishRecSession();
+  w.document.getElementById('finish-min').value = '18';
+  w.setRPE(3);
+  w.saveSession(20);
+  const s = storeOf(dom, 'sessions')[0];
+  eq('recovery min saved', s.min, 18);
+  eq('recovery work[0].min synced', s.work[0].min, 18);
+  dom.window.close();
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\n== 24. Hygiene ==');
 {
   eq('no console errors across the suite', consoleErrors, []);
   eq('zero network requests after load', netRequests, []);
   const html = HTML;
-  ok('APP_VERSION bumped to 1.5.0', /const APP_VERSION = '1\.5\.0'/.test(html));
+  ok('APP_VERSION bumped to 1.5.1', /const APP_VERSION = '1\.5\.1'/.test(html));
   ok('no webfonts or CDN links', !/https?:\/\/(fonts|cdn)/i.test(html));
   ok('no leftover manual-min references', !/manual-min/.test(html));
 }

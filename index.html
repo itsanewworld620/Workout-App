@@ -169,7 +169,7 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
 
 <script>
 'use strict';
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 
 /* ---------- wall-clock timers ----------
    All in-session timers derive their value from Date.now() timestamps, never
@@ -1117,9 +1117,13 @@ function finishCardioSession(defaultMin){
     slot: 'C',
     readiness: sessionState.variant.readiness,
     work: [{mode, min: minutes}],
+    // Always carry the duration on the draft. Cardio has no meaningful
+    // wall-clock elapsed (the session screen is a mode picker), so falling
+    // through to Date.now()-startedAt seeded the Finish screen with 1 min.
+    min: minutes,
     startedAt: sessionState.startedAt
   };
-  if(sessionState.manual){ draft.manual = true; draft.min = minutes; }
+  if(sessionState.manual) draft.manual = true;
   cardioTimer.reset();
   Nav.toFinish(draft);
 }
@@ -1172,9 +1176,10 @@ function finishRecSession(){
     slot: 'REC',
     readiness: sessionState.variant.readiness,
     work: [{mode:'recovery', min: minutes}],
+    min: minutes,
     startedAt: sessionState.startedAt
   };
-  if(sessionState.manual){ draft.manual = true; draft.min = minutes; }
+  if(sessionState.manual) draft.manual = true;
   recTimer.reset();
   Nav.toFinish(draft);
 }
@@ -1337,14 +1342,15 @@ function renderFinish(draft){
     rpeDots += `<button class="dot${sel}" style="width:36px;height:36px;font-size:14px;" data-rpe="${i}" onclick="setRPE(${i})">${i}</button>`;
   }
   // Manual and edited sessions have no timer to trust, so duration is typed.
-  const durationCard = isManual
-    ? `<div class="card">
-         <div class="card-title" style="font-size:17px;margin-bottom:8px;">Duration (min)</div>
-         <input type="number" inputmode="numeric" id="finish-min" value="${elapsedMin}" style="width:120px;">
-       </div>`
-    : `<div class="card">
-         <div class="flex-between"><div class="card-title" style="font-size:17px;">Duration</div><div class="row">${elapsedMin} min</div></div>
-       </div>`;
+  // Duration is always typeable. A timer that wasn't running is the normal case
+  // — phone in a pocket on a walk, or a session started before the app was open
+  // — and the app cannot know the number, so it must not refuse the correction.
+  const durationCard = `
+    <div class="card">
+      <div class="card-title" style="font-size:17px;margin-bottom:8px;">Duration (min)</div>
+      <input type="number" inputmode="numeric" id="finish-min" value="${elapsedMin}" style="width:120px;">
+      <div class="microcopy mt8">${isManual ? 'Type what it actually was.' : 'From the timer — change it if that\'s not right.'}</div>
+    </div>`;
   const banner = isManual
     ? `<div class="banner">Logging ${draft.date} from memory. Marked as a manual entry.</div>` : '';
   return `
@@ -1379,11 +1385,18 @@ function saveSession(elapsedMin){
   const note = noteEl ? noteEl.value : '';
   const minEl = document.getElementById('finish-min');
   const min = (minEl && minEl.value) ? parseInt(minEl.value) : elapsedMin;
+  // Cardio and recovery carry their duration twice: session-level `min` and
+  // work[0].min, which is what wos-review reads for those slots. An edited
+  // duration has to land in both or the log disagrees with itself.
+  let work = finishDraft.work;
+  if(work && work.length===1 && work[0] && work[0].mode && work[0].min!=null){
+    work = [Object.assign({}, work[0], {min})];
+  }
   const rec = {
     date: finishDraft.date,
     slot: finishDraft.slot,
     readiness: finishDraft.readiness,
-    work: finishDraft.work,
+    work,
     rpe: selectedRPE,
     min,
     note
