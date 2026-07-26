@@ -169,7 +169,7 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
 
 <script>
 'use strict';
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 /* ---------- wall-clock timers ----------
    All in-session timers derive their value from Date.now() timestamps, never
@@ -190,7 +190,23 @@ function makeCountUp(displayId, toggleBtnId){
     },
     stop(){ if(this.running){ this.accMs += Date.now()-this.segStart; this.segStart=null; this.running=false; } clearInterval(this.interval); this.interval=null; },
     minutes(){ return Math.round(this.elapsedSec()/60); },
-    reset(){ this.accMs=0; this.segStart=null; this.running=false; clearInterval(this.interval); this.interval=null; }
+    reset(){ this.accMs=0; this.segStart=null; this.running=false; clearInterval(this.interval); this.interval=null; },
+    /* Serialize/restore for session resume. accMs + segStart are wall-clock
+       values, so a timer that was running when the app died keeps counting
+       across the gap — which is correct: the walk/rest really did continue. */
+    serialize(){ return {accMs:this.accMs, segStart:this.segStart, running:this.running}; },
+    restore(o){
+      if(!o) return;
+      this.accMs = o.accMs||0; this.segStart = o.segStart||null; this.running = !!o.running;
+      clearInterval(this.interval); this.interval=null;
+      if(this.running){
+        if(this.segStart==null) this.segStart = Date.now();
+        this.interval = setInterval(()=>this.render(),250);
+      }
+      this.render();
+      const btn = document.getElementById(toggleBtnId);
+      if(btn) btn.textContent = this.running ? 'PAUSE' : (this.accMs>0 ? 'RESUME' : 'START');
+    }
   };
 }
 const cardioTimer  = makeCountUp('cardio-timer','cardio-toggle');
@@ -220,7 +236,94 @@ function ensureInit(){
   if(!store.get('daily')) store.set('daily', []);
   if(!store.get('weekly')) store.set('weekly', []);
   if(!store.get('config')) store.set('config', null);
+  if(store.get('active')===null && localStorage.getItem('wos.active')===null) store.set('active', null);
 }
+
+/* ---------- replay engine ----------
+   `sessions` is the single source of truth; `lifts` is a derived cache.
+   recomputeLifts() rebuilds lifts from scratch: every lift starts at its
+   config startWeight, then sessions are walked in DATE order applying double
+   progression (system-design §5). This is what makes editing a saved session
+   safe — lift state is recomputed, never patched. Incremental updates and an
+   editable log cannot coexist; they drift, and the drift is silent. */
+function progressionAdvances(exDef, sets){
+  // A set advances the lift only if every set hit the top of its target.
+  // Duration-based lifts (farmer carry) have repHi:null and gate on durationSec.
+  // Never compare against a null repHi — JS coerces null to 0, making the test
+  // unconditionally true and adding load every session with no gate at all.
+  if(!sets || !sets.length) return false;
+  if(exDef && exDef.repHi==null){
+    const target = exDef.durationSec;
+    if(target==null) return false;       // no gate definable -> never auto-advance
+    return sets.every(s=>(s[1]||0) >= target);
+  }
+  const repHi = exDef ? exDef.repHi : 12;
+  if(repHi==null) return false;
+  return sets.every(s=>(s[1]||0) >= repHi);
+}
+
+function recomputeLifts(){
+  const cfg = store.get('config');
+  const lifts = {};
+  if(!cfg || !cfg.workouts){ store.set('lifts', lifts); return lifts; }
+
+  const allEx = [];
+  for(const k in cfg.workouts) (cfg.workouts[k]||[]).forEach(e=>allEx.push(e));
+  allEx.forEach(ex=>{ lifts[ex.id] = { weight: ex.startWeight||0, lastReps: [] }; });
+
+  const sessions = (store.get('sessions')||[]).slice()
+    .sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+
+  sessions.forEach(s=>{
+    if(s.slot!=='A' && s.slot!=='B') return;   // only strength work drives progression
+    (s.work||[]).forEach(w=>{
+      if(!w.sets || !w.sets.length) return;
+      const exDef = findExDef(cfg, w.ex);
+      if(!exDef) return;
+      const increment = exDef.incrementLb || 5;
+      let weight = w.sets[0][0];
+      if(progressionAdvances(exDef, w.sets)) weight = weight + increment;
+      lifts[w.ex] = { weight, lastReps: w.sets.map(x=>x[1]) };
+    });
+  });
+
+  store.set('lifts', lifts);
+  return lifts;
+}
+
+/* ---------- live session persistence ----------
+   In-session state is never held only in memory. Every mutation writes to
+   `active` immediately, so a back press, refresh, or crash loses nothing.
+   [Through v1.4.0 sessionState was a module-level variable and the first
+   localStorage write happened at Save on Screen 3 — one Android back press
+   destroyed the entire session. Hard requirement: do not regress this.] */
+function persistActive(screen){
+  if(!sessionState) return;
+  const snap = {
+    date: sessionState.date || todayStr(),
+    screen: screen || sessionState.screen || 'session',
+    variant: sessionState.variant,
+    startedAt: sessionState.startedAt,
+    restEndAt: restEndAt,
+    note: sessionState.note || '',
+    manual: !!sessionState.manual,
+    editingIndex: (sessionState.editingIndex!=null ? sessionState.editingIndex : null),
+    exercises: sessionState.exercises ? sessionState.exercises.map(r=>({ex:r.ex, weight:r.weight, sets:r.sets})) : null,
+    mvsItems: sessionState.mvsItems || null,
+    recChecks: sessionState.recChecks || null,
+    mode: sessionState.mode || null,
+    min: sessionState.min!=null ? sessionState.min : null,
+    finishDraft: sessionState.finishDraft || null,
+    rpe: (typeof selectedRPE!=='undefined' ? selectedRPE : null),
+    timers: {
+      cardio: cardioTimer.serialize(),
+      rec: recTimer.serialize(),
+      outdoor: outdoorTimer.serialize()
+    }
+  };
+  store.set('active', snap);
+}
+function clearActive(){ store.set('active', null); }
 
 /* ---------- date helpers ---------- */
 function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
@@ -260,17 +363,37 @@ function scheduleForDate(dateStr){
   if(!cfg || !cfg.schedule) return null;
   return cfg.schedule[dowKey(dateStr)] || null;
 }
-function lastStrengthLetter(){
-  const sessions = store.get('sessions') || [];
-  for(let i=sessions.length-1;i>=0;i--){
-    if(sessions[i].slot==='A' || sessions[i].slot==='B') return sessions[i].slot;
-  }
-  return null;
+/* A/B sequencing walks sessions by DATE, never by insertion order — manual
+   entry can backfill out of order, and array position stopped meaning
+   chronology the moment editing existed. `before` scopes the lookup so a
+   backfilled session gets the letter its own date implies. */
+function lastStrengthLetter(before){
+  const sessions = (store.get('sessions') || []).slice()
+    .filter(s=>(s.slot==='A'||s.slot==='B') && (!before || s.date < before))
+    .sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+  return sessions.length ? sessions[sessions.length-1].slot : null;
 }
-function nextStrengthLetter(){
-  const last = lastStrengthLetter();
+function nextStrengthLetter(before){
+  const last = lastStrengthLetter(before);
   if(last==='A') return 'B';
   return 'A'; // null or B -> A
+}
+/* Scheduled sessions across the trailing 28 days, computed from config.schedule.
+   [A hardcoded denominator misreports a partial history or a changed schedule,
+   and manual entry plus delete both move the numerator.] */
+function scheduledCountLast28(){
+  const cfg = store.get('config');
+  if(!cfg || !cfg.schedule) return 0;
+  const meta = store.get('meta') || {};
+  const start = meta.startDate || todayStr();
+  let n = 0;
+  for(let i=0;i<28;i++){
+    const d = addDays(todayStr(), -i);
+    if(d < start) continue;                      // don't count days before the system existed
+    const slot = cfg.schedule[dowKey(d)];
+    if(slot && slot!=='REST') n++;
+  }
+  return n;
 }
 function currentStreak(){
   const sessions = store.get('sessions') || [];
@@ -299,6 +422,54 @@ function sevenDayAvgBW(){
   return sum/last7.length;
 }
 
+/* ---------- exit guards ----------
+   Polish, NOT the safety mechanism. Mobile Chrome suppresses beforeunload
+   without prior interaction and behaves inconsistently in PWA standalone mode,
+   so a guard that silently fails must still cost nothing — persistActive()
+   already wrote every tap. Never make data safety depend on these firing. */
+let guardPushed = false;
+function pushSessionGuard(){
+  if(guardPushed) return;
+  try{ history.pushState({wosGuard:true}, ''); guardPushed = true; }catch(e){}
+}
+function clearSessionGuard(){ guardPushed = false; }
+
+window.addEventListener('popstate', ()=>{
+  if(!guardPushed) return;
+  guardPushed = false;
+  if(!store.get('active')){ return; }
+  confirmSheet(
+    'Leave session?',
+    'Your logged sets are saved — you can pick this session back up from Home.',
+    'LEAVE', 'STAY',
+    ()=>{ Nav.home(); },
+    ()=>{ pushSessionGuard(); }
+  );
+});
+
+window.addEventListener('beforeunload', (e)=>{
+  if(!store.get('active')) return;
+  e.preventDefault();
+  e.returnValue = '';
+  return '';
+});
+
+function confirmSheet(title, body, okLabel, cancelLabel, onOk, onCancel){
+  const backdrop = document.createElement('div');
+  backdrop.className='modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal-sheet">
+      <div class="card-title" style="font-size:20px;">${title}</div>
+      <div class="microcopy mt8">${body}</div>
+      <button class="pill-btn accent mt16" id="cs-ok">${okLabel}</button>
+      <button class="pill-btn ghost mt12" id="cs-cancel">${cancelLabel}</button>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const close = ()=>{ if(backdrop.parentNode) document.body.removeChild(backdrop); };
+  backdrop.querySelector('#cs-ok').onclick = ()=>{ close(); if(onOk) onOk(); };
+  backdrop.querySelector('#cs-cancel').onclick = ()=>{ close(); if(onCancel) onCancel(); };
+}
+
 /* ---------- render root ---------- */
 const Nav = {
   tab(name){
@@ -306,15 +477,26 @@ const Nav = {
     document.getElementById('tabbar').classList.remove('hidden');
     Screens.render(name);
   },
-  toSession(variant){
+  toSession(variant, restored){
     document.getElementById('tabbar').classList.add('hidden');
-    Screens.render('session', {variant});
+    pushSessionGuard();
+    Screens.render('session', {variant, restored});
   },
   toFinish(sessionDraft){
     document.getElementById('tabbar').classList.add('hidden');
+    pushSessionGuard();
     Screens.render('finish', {draft:sessionDraft});
   },
+  toManual(params){
+    document.getElementById('tabbar').classList.add('hidden');
+    Screens.render('manual', params||{});
+  },
+  toHistory(){
+    document.getElementById('tabbar').classList.remove('hidden');
+    Screens.render('history');
+  },
   home(){
+    clearSessionGuard();
     document.getElementById('tabbar').classList.remove('hidden');
     document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab==='home'));
     Screens.render('home');
@@ -325,10 +507,12 @@ const Screens = { render(name,params){
   const app=document.getElementById('app');
   app.innerHTML='';
   if(name==='home') app.innerHTML = renderHome();
-  else if(name==='session') app.innerHTML = renderSession(params.variant);
+  else if(name==='session') app.innerHTML = renderSession(params.variant, params.restored);
   else if(name==='finish') app.innerHTML = renderFinish(params.draft);
   else if(name==='progress') app.innerHTML = renderProgress();
   else if(name==='settings') app.innerHTML = renderSettings();
+  else if(name==='manual') app.innerHTML = renderManual(params);
+  else if(name==='history') app.innerHTML = renderHistory();
   afterRender(name, params);
 }};
 
@@ -340,6 +524,9 @@ let mvsMode = false; // set by the "No gym today" link on a strength day
 function renderHome(){
   ensureInit();
   mvsMode = false;
+  // Reset readiness on every Home render. [Otherwise Start re-enables in the
+  // previous session's state color carrying answers Joel never entered.]
+  readinessAns = {sleep:null, sore:null, energy:null};
   const cfg = store.get('config');
   const meta = store.get('meta');
   const today = todayStr();
@@ -356,6 +543,24 @@ function renderHome(){
     if(days>7) backupBanner = `<div class="banner" onclick="Nav.tab('settings')">Back up your data — Settings</div>`;
   } else if(daysBetween(meta.startDate, today) > 7){
     backupBanner = `<div class="banner" onclick="Nav.tab('settings')">Back up your data — Settings</div>`;
+  }
+
+  // An unfinished session owns the screen: resume is the only sensible action,
+  // and re-answering readiness on top of a live session would be nonsense.
+  const active = store.get('active');
+  if(active && active.date === today){
+    return `
+      <div class="screen active">
+        ${backupBanner}
+        <div class="flex-between"><h1 class="title">Home</h1></div>
+        <div class="card accent-card">
+          <div class="card-header"><div class="card-title">Session in progress</div></div>
+          <div class="sub">${activeSummary(active)}</div>
+        </div>
+        <button class="pill-btn accent mt12" onclick="resumeActive()">RESUME SESSION</button>
+        <button class="pill-btn ghost mt12" onclick="discardActive()">DISCARD</button>
+        <div class="microcopy mt16 center">Everything you logged is saved.</div>
+      </div>`;
   }
 
   let todayCardHtml;
@@ -387,6 +592,11 @@ function renderHome(){
         ${noGymLink}
       </div>`;
   }
+
+  // Low prominence is deliberate — this must never compete with Start.
+  const pastLink = cfg
+    ? `<div class="center mt8"><a class="link" style="font-size:14px;" onclick="Nav.toManual({})">Log a past session</a></div>`
+    : '';
 
   const bwSection = `
     <div class="card">
@@ -431,8 +641,108 @@ function renderHome(){
       ${bwSection}
       ${weeklyExtra}
       ${readinessSection}
+      ${pastLink}
     </div>
   `;
+}
+
+function activeSummary(a){
+  const v = a.variant || {};
+  let what = 'Session';
+  if(v.kind==='STRENGTH') what = 'Strength ' + (v.letter||'');
+  else if(v.kind==='CARDIO') what = 'Cardio';
+  else if(v.kind==='REC') what = 'Recovery';
+  else if(v.kind==='MVS') what = 'MVS — ' + (v.mvsType||'');
+  else if(v.kind==='MVS_PICK') what = 'MVS — pick a tier';
+  let logged = 0;
+  (a.exercises||[]).forEach(r=>(r.sets||[]).forEach(s=>{ if(s) logged++; }));
+  (a.mvsItems||[]).forEach(it=>(it.logged||[]).forEach(x=>{ if(x) logged++; }));
+  const bits = [what];
+  if(logged) bits.push(logged + ' set' + (logged===1?'':'s') + ' logged');
+  if(a.screen==='finish') bits.push('at the finish screen');
+  return bits.join(' · ');
+}
+
+function resumeActive(){
+  const a = store.get('active');
+  if(!a){ Nav.home(); return; }
+  cardioTimer.restore(a.timers && a.timers.cardio);
+  recTimer.restore(a.timers && a.timers.rec);
+  outdoorTimer.restore(a.timers && a.timers.outdoor);
+  if(a.screen==='finish' && a.finishDraft){
+    sessionState = restoreSessionState(a);
+    selectedRPE = a.rpe!=null ? a.rpe : null;
+    Nav.toFinish(a.finishDraft);
+    return;
+  }
+  Nav.toSession(a.variant, a);
+}
+
+function restoreSessionState(a){
+  return {
+    variant: a.variant, work: [], startedAt: a.startedAt,
+    restEndAt: a.restEndAt, mode: a.mode, min: a.min, note: a.note||'',
+    exercises: a.exercises||null, mvsItems: a.mvsItems||null,
+    recChecks: a.recChecks||null, date: a.date, manual: !!a.manual,
+    editingIndex: (a.editingIndex!=null ? a.editingIndex : null),
+    finishDraft: a.finishDraft||null, screen: a.screen||'session'
+  };
+}
+
+function discardActive(){
+  confirmSheet('Discard this session?',
+    'Everything logged in it will be thrown away. This cannot be undone.',
+    'DISCARD', 'KEEP IT',
+    ()=>{ clearActive(); sessionState=null; Nav.home(); });
+}
+
+/* An unfinished session from a previous day. Never dropped silently — an
+   abandoned session is data, and discarding it unasked is the app deciding
+   something on Joel's behalf. */
+function checkStaleActive(){
+  const a = store.get('active');
+  if(!a || a.date === todayStr()) return false;
+  confirmSheet(
+    'Unfinished session from ' + a.date,
+    activeSummary(a) + '. Log it as it stands, or throw it away?',
+    'FINISH & LOG IT', 'DISCARD',
+    ()=>{
+      cardioTimer.restore(a.timers && a.timers.cardio);
+      recTimer.restore(a.timers && a.timers.rec);
+      outdoorTimer.restore(a.timers && a.timers.outdoor);
+      sessionState = restoreSessionState(a);
+      const draft = a.finishDraft || buildDraftFromActive(a);
+      selectedRPE = a.rpe!=null ? a.rpe : null;
+      Nav.toFinish(draft);
+    },
+    ()=>{ clearActive(); sessionState=null; Nav.home(); }
+  );
+  return true;
+}
+
+function buildDraftFromActive(a){
+  const v = a.variant||{};
+  const base = { date:a.date, readiness:v.readiness||null, startedAt:a.startedAt };
+  if(v.kind==='STRENGTH'){
+    base.slot = v.letter;
+    base.work = (a.exercises||[]).map(row=>({
+      ex: row.ex.id,
+      target: `${row.ex.sets||3}x${row.ex.repLo}-${row.ex.repHi}@${row.weight||row.ex.startWeight||0}`,
+      sets: (row.sets||[]).filter(Boolean).map(s=>[s.weight,s.reps])
+    }));
+  } else if(v.kind==='CARDIO'){
+    base.slot = 'C';
+    base.work = [{mode: a.mode||'incline_walk', min: cardioTimer.minutes()||20}];
+  } else if(v.kind==='MVS' && v.mvsType==='outdoor'){
+    base.slot='MVS'; base.mvsType='outdoor'; base.min = outdoorTimer.minutes()||20;
+  } else if(v.kind==='MVS'){
+    base.slot='MVS'; base.mvsType=v.mvsType;
+    base.work = (a.mvsItems||[]).map(it=>({ex:it.id, target:it.target}));
+  } else {
+    base.slot='REC';
+    base.work = [{mode:'recovery', min: recTimer.minutes()||20}];
+  }
+  return base;
 }
 
 function readinessQ(key,label){
@@ -536,55 +846,87 @@ function saveWeeklyIfSunday(){
 /* ================= SESSION ================= */
 let sessionState = null; // working state during a session
 
-function renderSession(variant){
-  sessionState = { variant, work: [], startedAt: Date.now(), restEndAt:null, mode:null, min:null, note:'' };
+function renderSession(variant, restored){
+  if(restored){
+    sessionState = restoreSessionState(restored);
+    sessionState.restored = true;
+    restEndAt = restored.restEndAt || null;
+    if(restEndAt!=null && restEndAt > Date.now()){
+      clearInterval(restTimerInterval);
+      restTimerInterval = setInterval(renderRestTimer, 250);
+    } else { restEndAt = null; }
+  } else {
+    sessionState = { variant, work: [], startedAt: Date.now(), restEndAt:null,
+                     // seed from the record being edited so an edit preserves
+                     // what was logged rather than silently resetting it
+                     mode: (variant && variant.existing && (variant.existing.work||[])[0])
+                           ? (variant.existing.work[0].mode || null) : null,
+                     min: (variant && variant.existing) ? (variant.existing.min!=null ? variant.existing.min : null) : null,
+                     note: (variant && variant.existing) ? (variant.existing.note||'') : '',
+                     date: (variant && variant.date) || todayStr(),
+                     manual: !!(variant && variant.manual),
+                     editingIndex: (variant && variant.editingIndex!=null) ? variant.editingIndex : null };
+  }
 
-  if(variant.kind==='MVS_PICK'){
-    return renderMvsPicker(variant);
-  }
-  if(variant.kind==='MVS'){
-    return renderMvsSession(variant);
-  }
-  if(variant.kind==='REC'){
-    return renderRecSession();
-  }
-  if(variant.kind==='CARDIO'){
-    return renderCardioSession(variant);
-  }
-  return renderStrengthSession(variant);
+  let html;
+  if(variant.kind==='MVS_PICK')      html = renderMvsPicker(variant);
+  else if(variant.kind==='MVS')      html = renderMvsSession(variant);
+  else if(variant.kind==='REC')      html = renderRecSession();
+  else if(variant.kind==='CARDIO')   html = renderCardioSession(variant);
+  else                               html = renderStrengthSession(variant);
+
+  persistActive('session');
+  return html;
 }
 
 function renderStrengthSession(variant){
   const cfg = store.get('config');
   const list = (cfg && cfg.workouts && cfg.workouts[variant.letter]) || [];
   const lifts = store.get('lifts') || {};
-  sessionState.exercises = list.map(ex=>{
-    const st = lifts[ex.id] || {weight: null, lastReps:[]};
-    return {ex, weight: st.weight, sets: []};
-  });
+  // Only build fresh exercise rows if we aren't resuming — a restored session
+  // already carries its logged sets and must not be reset to empty.
+  if(!sessionState.exercises){
+    // Editing a saved session pre-fills its recorded sets — otherwise "edit"
+    // would mean re-entering the whole workout from scratch.
+    const prior = {};
+    if(variant.existing){
+      (variant.existing.work||[]).forEach(w=>{ prior[w.ex] = w.sets||[]; });
+    }
+    sessionState.exercises = list.map(ex=>{
+      const st = lifts[ex.id] || {weight: null, lastReps:[]};
+      const saved = prior[ex.id];
+      if(saved){
+        return { ex, weight: saved.length ? saved[0][0] : st.weight,
+                 sets: saved.map(s=>({weight:s[0], reps:s[1]})) };
+      }
+      return {ex, weight: st.weight, sets: []};
+    });
+  }
 
   const stripe = variant.degraded ? `<span class="badge yellow">YELLOW — modified</span>` : `<span class="badge green">GREEN</span>`;
-  const setsPerExercise = variant.degraded ? 'reduced' : 'full';
 
   let exHtml = sessionState.exercises.map((row,idx)=>{
     const ex = row.ex;
     let numSets = ex.sets || 3;
     if(variant.degraded) numSets = Math.max(1, numSets-1);
     const weight = row.weight || ex.startWeight || 0;
-    const repRange = `${ex.repLo}–${ex.repHi}`;
+    const repRange = ex.repHi==null ? `${ex.durationSec||0}s` : `${ex.repLo}–${ex.repHi}`;
     let setsHtml='';
     for(let s=0;s<numSets;s++){
+      const done = (row.sets||[])[s];
+      const wShown = done ? done.weight : weight;
+      const rShown = done ? done.reps : '–';
       setsHtml += `
         <div class="set-row" data-ex="${idx}" data-set="${s}">
-          <button class="tap-circle" id="circ-${idx}-${s}" onclick="logSet(${idx},${s},${weight},${ex.repLo})">
+          <button class="tap-circle${done?' logged':''}" id="circ-${idx}-${s}" onclick="logSet(${idx},${s},${weight},${ex.repLo||ex.durationSec||0})">
             <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>
           </button>
           <span class="set-num">${s+1}</span>
           <span class="spacer"></span>
-          <button class="chip" id="wchip-${idx}-${s}" onclick="editSet(${idx},${s},'weight')">${weight}</button>
+          <button class="chip" id="wchip-${idx}-${s}" onclick="editSet(${idx},${s},'weight')">${wShown}</button>
           <span class="unit">LBS</span>
-          <button class="chip" id="rchip-${idx}-${s}" onclick="editSet(${idx},${s},'reps')">–</button>
-          <span class="unit">Reps</span>
+          <button class="chip" id="rchip-${idx}-${s}" onclick="editSet(${idx},${s},'reps')">${rShown}</button>
+          <span class="unit">${ex.repHi==null?'Secs':'Reps'}</span>
         </div>`;
     }
     return `
@@ -619,6 +961,7 @@ function logSet(exIdx, setIdx, weight, reps){
   sessionState.exercises[exIdx].sets[setIdx] = {weight, reps};
   const restSec = sessionState.exercises[exIdx].ex.restSec || 90;
   startRestTimer(restSec);
+  persistActive('session');
 }
 
 function editSet(exIdx, setIdx, field){
@@ -636,6 +979,7 @@ function editSet(exIdx, setIdx, field){
     const w = parseInt(document.getElementById(`wchip-${exIdx}-${setIdx}`).textContent)||0;
     const r = parseInt(document.getElementById(`rchip-${exIdx}-${setIdx}`).textContent)||0;
     sessionState.exercises[exIdx].sets[setIdx] = {weight:w, reps:r};
+    persistActive('session');
   });
 }
 
@@ -710,22 +1054,28 @@ function finishStrengthSession(){
     sets: row.sets.filter(Boolean).map(s=>[s.weight,s.reps])
   }));
   const draft = {
-    date: todayStr(),
+    date: sessionState.date || todayStr(),
     slot: sessionState.variant.letter,
     readiness: sessionState.variant.readiness,
     work,
     startedAt: sessionState.startedAt
   };
+  // A manual session has no timer to trust; seed a plausible duration and let
+  // the Finish screen's editable field carry the real number.
+  if(sessionState.manual){ draft.manual = true; draft.min = 45; }
   Nav.toFinish(draft);
 }
 
 function renderCardioSession(variant){
-  cardioTimer.reset();
+  // Only a genuine resume keeps the running timer. A fresh or edited session
+  // starts the timer clean so a previous session's clock can't leak in.
+  if(!(sessionState && sessionState.restored)) cardioTimer.reset();
   const cfg = store.get('config');
   const menu = (cfg && cfg.cardioMenu) || ['incline_walk','bike','rower','stairs'];
   const defaultMin = variant.degraded ? 20 : 35;
   const stripe = variant.degraded ? `<span class="badge yellow">YELLOW — 20 min, easiest mode</span>` : `<span class="badge green">GREEN</span>`;
-  const options = menu.map(m=>`<option value="${m}">${labelMode(m)}</option>`).join('');
+  const sel = sessionState ? sessionState.mode : null;   // pre-select on resume or edit
+  const options = menu.map(m=>`<option value="${m}"${sel===m?' selected':''}>${labelMode(m)}</option>`).join('');
   return `
     <div class="screen active" style="padding-bottom:100px;">
       <div class="flex-between mt8" style="margin-bottom:12px;">
@@ -734,7 +1084,7 @@ function renderCardioSession(variant){
       </div>
       <div class="card">
         <div class="card-title" style="font-size:17px;margin-bottom:10px;">Mode</div>
-        <select id="cardio-mode">${options}</select>
+        <select id="cardio-mode" onchange="setCardioMode(this.value)">${options}</select>
       </div>
       <div class="card center">
         <div class="timer-pill" id="cardio-timer">00:00</div>
@@ -753,28 +1103,35 @@ function labelMode(m){
   const map={incline_walk:'Incline walk', bike:'Bike', rower:'Rower', stairs:'Stairs'};
   return map[m]||m;
 }
-function toggleCardioTimer(){ cardioTimer.toggle(); }
+function setCardioMode(v){ if(sessionState){ sessionState.mode = v; persistActive('session'); } }
+function toggleCardioTimer(){ cardioTimer.toggle(); persistActive('session'); }
 function finishCardioSession(defaultMin){
   cardioTimer.stop();
-  const mode = document.getElementById('cardio-mode').value;
-  const minutes = cardioTimer.elapsedSec()>0 ? cardioTimer.minutes() : defaultMin;
+  const el = document.getElementById('cardio-mode');
+  const mode = el ? el.value : (sessionState.mode||'incline_walk');
+  const minutes = cardioTimer.elapsedSec()>0
+    ? cardioTimer.minutes()
+    : (sessionState.min!=null ? sessionState.min : defaultMin);   // keep the edited record's duration
   const draft = {
-    date: todayStr(),
+    date: sessionState.date || todayStr(),
     slot: 'C',
     readiness: sessionState.variant.readiness,
     work: [{mode, min: minutes}],
     startedAt: sessionState.startedAt
   };
+  if(sessionState.manual){ draft.manual = true; draft.min = minutes; }
   cardioTimer.reset();
   Nav.toFinish(draft);
 }
 
 function renderRecSession(){
-  recTimer.reset();
+  if(!(sessionState && sessionState.restored)) recTimer.reset();
   const mobility = ['Cat-cow x10','World\'s greatest stretch x6/side','Band pull-apart x15','Hip 90/90 x8/side','Wall slide x10'];
-  const items = mobility.map(m=>`
+  // Mobility ticks live in state, not only in the DOM, so they survive a resume.
+  if(!sessionState.recChecks) sessionState.recChecks = mobility.map(()=>false);
+  const items = mobility.map((m,i)=>`
     <div class="set-row">
-      <button class="tap-circle" onclick="this.classList.toggle('logged')">
+      <button class="tap-circle${sessionState.recChecks[i]?' logged':''}" onclick="toggleRecCheck(${i},this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>
       </button>
       <span class="row">${m}</span>
@@ -801,17 +1158,23 @@ function renderRecSession(){
     </div></div>
   `;
 }
-function toggleRecTimer(){ recTimer.toggle(); }
+function toggleRecCheck(i, el){
+  sessionState.recChecks[i] = !sessionState.recChecks[i];
+  el.classList.toggle('logged', sessionState.recChecks[i]);
+  persistActive('session');
+}
+function toggleRecTimer(){ recTimer.toggle(); persistActive('session'); }
 function finishRecSession(){
   recTimer.stop();
   const minutes = recTimer.elapsedSec()>0 ? recTimer.minutes() : 20;
   const draft = {
-    date: todayStr(),
+    date: sessionState.date || todayStr(),
     slot: 'REC',
     readiness: sessionState.variant.readiness,
     work: [{mode:'recovery', min: minutes}],
     startedAt: sessionState.startedAt
   };
+  if(sessionState.manual){ draft.manual = true; draft.min = minutes; }
   recTimer.reset();
   Nav.toFinish(draft);
 }
@@ -837,7 +1200,11 @@ function renderMvsPicker(variant){
 }
 function pickMvs(type){
   const r = sessionState && sessionState.variant ? sessionState.variant.readiness : null;
-  Nav.toSession({kind:'MVS', mvsType:type, readiness:r});
+  const d = sessionState ? sessionState.date : todayStr();
+  const man = sessionState ? !!sessionState.manual : false;
+  const ei = sessionState && sessionState.editingIndex!=null ? sessionState.editingIndex : null;
+  sessionState = null;   // drop the picker's state so the real session builds fresh
+  Nav.toSession({kind:'MVS', mvsType:type, readiness:r, date:d, manual:man, editingIndex:ei});
 }
 
 function renderMvsSession(variant){
@@ -855,14 +1222,21 @@ function mvsTargetText(it){
 function renderMvsCircuit(variant){
   const cfg = store.get('config');
   const list = (variant.mvsType==='gym' ? (cfg&&cfg.mvsGym) : (cfg&&cfg.mvsTravel)) || [];
-  sessionState.mvsItems = list.map(it=>({ id:it.id, name:it.name, target:mvsTargetText(it), sets: it.sets||1 }));
+  // Preserve tapped state across a resume — `logged` lives in state, not the DOM.
+  if(!sessionState.mvsItems){
+    sessionState.mvsItems = list.map(it=>({
+      id:it.id, name:it.name, target:mvsTargetText(it), sets: it.sets||1,
+      logged: new Array(it.sets||1).fill(false)
+    }));
+  }
   const label = variant.mvsType==='gym' ? 'MVS — GYM' : 'MVS — TRAVEL';
   const html = sessionState.mvsItems.map((it,i)=>{
     let rows='';
     for(let s=0;s<it.sets;s++){
+      const done = (it.logged||[])[s];
       rows += `
         <div class="set-row">
-          <button class="tap-circle" id="mcirc-${i}-${s}" onclick="logMvsSet(${i},${s})">
+          <button class="tap-circle${done?' logged':''}" id="mcirc-${i}-${s}" onclick="logMvsSet(${i},${s})">
             <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>
           </button>
           <span class="set-num">${s+1}</span>
@@ -890,24 +1264,30 @@ function logMvsSet(i,s){
   const circ = document.getElementById(`mcirc-${i}-${s}`);
   if(!circ) return;
   circ.classList.add('logged');
+  if(sessionState.mvsItems && sessionState.mvsItems[i]){
+    if(!sessionState.mvsItems[i].logged) sessionState.mvsItems[i].logged = [];
+    sessionState.mvsItems[i].logged[s] = true;
+  }
   startRestTimer(60);
+  persistActive('session');
 }
 function finishMvsCircuit(){
   clearInterval(restTimerInterval); restTimerInterval=null; restEndAt=null;
   const work = (sessionState.mvsItems||[]).map(it=>({ex:it.id, target:it.target}));
   const draft = {
-    date: todayStr(),
+    date: sessionState.date || todayStr(),
     slot: 'MVS',
     mvsType: sessionState.variant.mvsType,
     readiness: sessionState.variant.readiness,
     work,
     startedAt: sessionState.startedAt
   };
+  if(sessionState.manual){ draft.manual = true; draft.min = 20; }
   Nav.toFinish(draft);
 }
 
 function renderMvsOutdoor(variant){
-  outdoorTimer.reset();
+  if(!(sessionState && sessionState.restored)) outdoorTimer.reset();
   return `
     <div class="screen active" style="padding-bottom:100px;">
       <div class="flex-between mt8" style="margin-bottom:12px;">
@@ -925,18 +1305,19 @@ function renderMvsOutdoor(variant){
       <button class="pill-btn accent" onclick="finishMvsOutdoor()">FINISH SESSION</button>
     </div></div>`;
 }
-function toggleOutdoorTimer(){ outdoorTimer.toggle(); }
+function toggleOutdoorTimer(){ outdoorTimer.toggle(); persistActive('session'); }
 function finishMvsOutdoor(){
   outdoorTimer.stop();
   const minutes = outdoorTimer.elapsedSec()>0 ? outdoorTimer.minutes() : 20;
   const draft = {
-    date: todayStr(),
+    date: sessionState.date || todayStr(),
     slot: 'MVS',
     mvsType: 'outdoor',
     readiness: sessionState.variant.readiness,
     min: minutes,          // outdoor has no work array; the walk time is the whole session
     startedAt: sessionState.startedAt
   };
+  if(sessionState.manual) draft.manual = true;
   outdoorTimer.reset();
   Nav.toFinish(draft);
 }
@@ -945,27 +1326,40 @@ function finishMvsOutdoor(){
 let finishDraft = null;
 function renderFinish(draft){
   finishDraft = draft;
+  if(sessionState){ sessionState.finishDraft = draft; persistActive('finish'); }
+  const isManual = !!draft.manual;
   const elapsedMin = draft.min!=null
     ? draft.min
     : Math.max(1, Math.round((Date.now()-draft.startedAt)/60000));
   let rpeDots='';
   for(let i=1;i<=10;i++){
-    rpeDots += `<button class="dot" style="width:36px;height:36px;font-size:14px;" data-rpe="${i}" onclick="setRPE(${i})">${i}</button>`;
+    const sel = (selectedRPE===i) ? ' selected' : '';
+    rpeDots += `<button class="dot${sel}" style="width:36px;height:36px;font-size:14px;" data-rpe="${i}" onclick="setRPE(${i})">${i}</button>`;
   }
+  // Manual and edited sessions have no timer to trust, so duration is typed.
+  const durationCard = isManual
+    ? `<div class="card">
+         <div class="card-title" style="font-size:17px;margin-bottom:8px;">Duration (min)</div>
+         <input type="number" inputmode="numeric" id="finish-min" value="${elapsedMin}" style="width:120px;">
+       </div>`
+    : `<div class="card">
+         <div class="flex-between"><div class="card-title" style="font-size:17px;">Duration</div><div class="row">${elapsedMin} min</div></div>
+       </div>`;
+  const banner = isManual
+    ? `<div class="banner">Logging ${draft.date} from memory. Marked as a manual entry.</div>` : '';
   return `
     <div class="screen active">
+      ${banner}
       <h1 class="title">Finish</h1>
       <div class="card">
         <div class="card-title" style="font-size:17px;">Session RPE</div>
         <div class="dots mt8" style="flex-wrap:wrap;">${rpeDots}</div>
         <div class="microcopy mt8">9–10 means you broke the cap.</div>
       </div>
-      <div class="card">
-        <div class="flex-between"><div class="card-title" style="font-size:17px;">Duration</div><div class="row">${elapsedMin} min</div></div>
-      </div>
+      ${durationCard}
       <div class="card">
         <div class="card-title" style="font-size:17px;margin-bottom:8px;">Note (optional)</div>
-        <textarea class="wos-textarea" id="finish-note" style="min-height:60px;"></textarea>
+        <textarea class="wos-textarea" id="finish-note" style="min-height:60px;">${draft.note||''}</textarea>
       </div>
     </div>
     <div class="sticky-bar"><div class="sticky-bar-inner">
@@ -977,43 +1371,43 @@ let selectedRPE = null;
 function setRPE(v){
   selectedRPE = v;
   document.querySelectorAll('[data-rpe]').forEach(d=>d.classList.toggle('selected', parseInt(d.dataset.rpe)===v));
+  persistActive('finish');
 }
 function saveSession(elapsedMin){
   const sessions = store.get('sessions')||[];
-  const note = document.getElementById('finish-note').value;
+  const noteEl = document.getElementById('finish-note');
+  const note = noteEl ? noteEl.value : '';
+  const minEl = document.getElementById('finish-min');
+  const min = (minEl && minEl.value) ? parseInt(minEl.value) : elapsedMin;
   const rec = {
     date: finishDraft.date,
     slot: finishDraft.slot,
     readiness: finishDraft.readiness,
     work: finishDraft.work,
     rpe: selectedRPE,
-    min: elapsedMin,
+    min,
     note
   };
   if(finishDraft.mvsType) rec.mvsType = finishDraft.mvsType; // gym|travel|outdoor
-  sessions.push(rec);
+  if(finishDraft.manual) rec.manual = true;
+
+  const editIdx = (sessionState && sessionState.editingIndex!=null) ? sessionState.editingIndex : null;
+  if(editIdx!=null && sessions[editIdx]){
+    rec.manual = true;              // an edited record is no longer a pure live log
+    sessions[editIdx] = rec;
+  } else {
+    sessions.push(rec);
+  }
   store.set('sessions', sessions);
 
-  if(finishDraft.slot==='A' || finishDraft.slot==='B'){
-    const lifts = store.get('lifts')||{};
-    finishDraft.work.forEach(w=>{
-      if(!w.sets || !w.sets.length) return;
-      const cfg = store.get('config');
-      const exDef = findExDef(cfg, w.ex);
-      const repHi = exDef ? exDef.repHi : 12;
-      const repLo = exDef ? exDef.repLo : 8;
-      const increment = exDef ? (exDef.incrementLb||5) : 5;
-      const allTop = w.sets.every(s=>s[1]>=repHi);
-      const cur = lifts[w.ex] || {weight: exDef?exDef.startWeight:0, lastReps:[]};
-      let weight = w.sets[0][0];
-      if(allTop) weight = weight + increment;
-      lifts[w.ex] = {weight, lastReps: w.sets.map(s=>s[1])};
-    });
-    store.set('lifts', lifts);
-  }
+  // Lift state is derived, never patched — replay from the log so an edit or an
+  // out-of-order backfill lands correctly.
+  recomputeLifts();
 
   selectedRPE=null;
   finishDraft=null;
+  sessionState=null;
+  clearActive();
   Nav.home();
 }
 function findExDef(cfg, exId){
@@ -1025,6 +1419,222 @@ function findExDef(cfg, exId){
   return null;
 }
 
+/* ================= MANUAL ENTRY / EDIT =================
+   Records what happened; it does not invent what didn't. system-design §4 bans
+   makeup sessions, and manual entry is exactly the door one would walk through,
+   so three guards apply: a 7-day backfill window, one record per date, and the
+   manual:true flag that keeps "logged from memory" auditable in the data. */
+const BACKFILL_DAYS = 7;
+let manualDraft = {date:null, slot:null, mvsType:null, readiness:null, dontRemember:false};
+
+function renderManual(params){
+  params = params || {};
+  if(params.editingIndex!=null) return renderManualForEdit(params.editingIndex);
+
+  manualDraft = {date:null, slot:null, mvsType:null, readiness:null, dontRemember:false};
+  const sessions = store.get('sessions')||[];
+  const taken = {};
+  sessions.forEach(s=>{ taken[s.date]=s.slot; });
+
+  let dayOpts = '';
+  for(let i=1;i<=BACKFILL_DAYS;i++){
+    const d = addDays(todayStr(), -i);
+    const isTaken = !!taken[d];
+    dayOpts += `<button class="pill-btn ${isTaken?'disabled':'ghost'} mt8" ${isTaken?'':`onclick="manualPickDate('${d}')"`}>
+      ${fmtDateHeader(d)}${isTaken?` — already logged (${taken[d]})`:''}
+    </button>`;
+  }
+  const todayTaken = !!taken[todayStr()];
+  const todayBtn = `<button class="pill-btn ${todayTaken?'disabled':'ghost'} mt8" ${todayTaken?'':`onclick="manualPickDate('${todayStr()}')"`}>
+      Today${todayTaken?` — already logged (${taken[todayStr()]})`:''}
+    </button>`;
+
+  return `
+    <div class="screen active">
+      <h1 class="title">Log a past session</h1>
+      <div class="card">
+        <div class="sub">Which day?</div>
+        <div class="microcopy mt8">Last ${BACKFILL_DAYS} days only. One session per day. This records a session you actually did — it is not a makeup for one you missed.</div>
+      </div>
+      ${todayBtn}
+      ${dayOpts}
+      <button class="pill-btn ghost mt16" onclick="Nav.home()">CANCEL</button>
+    </div>`;
+}
+
+function manualPickDate(d){
+  manualDraft.date = d;
+  const app = document.getElementById('app');
+  const cfg = store.get('config');
+  const sched = cfg && cfg.schedule ? cfg.schedule[dowKey(d)] : null;
+  const suggested = sched==='S' ? `Strength ${nextStrengthLetter(d)}` : (sched==='C' ? 'Cardio' : 'Rest day');
+  app.innerHTML = `
+    <div class="screen active">
+      <h1 class="title">${fmtDateHeader(d)}</h1>
+      <div class="card"><div class="sub">Schedule said: ${suggested}</div>
+        <div class="microcopy mt8">Pick what you actually did.</div></div>
+      <button class="pill-btn ghost mt8" onclick="manualPickSlot('A')">STRENGTH A</button>
+      <button class="pill-btn ghost mt8" onclick="manualPickSlot('B')">STRENGTH B</button>
+      <button class="pill-btn ghost mt8" onclick="manualPickSlot('C')">CARDIO</button>
+      <button class="pill-btn ghost mt8" onclick="manualPickSlot('MVS')">MVS</button>
+      <button class="pill-btn ghost mt8" onclick="manualPickSlot('REC')">RECOVERY</button>
+      <button class="pill-btn ghost mt16" onclick="Nav.toManual({})">BACK</button>
+    </div>`;
+}
+
+function manualPickSlot(slot){
+  manualDraft.slot = slot;
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="screen active">
+      <h1 class="title">Readiness</h1>
+      <div class="card">
+        <div class="sub">How did you feel that day?</div>
+        <div class="microcopy mt8">If you don't remember, say so — invented numbers corrupt the soreness and readiness rules that read this.</div>
+        ${readinessQ('sleep','Sleep last night')}
+        ${readinessQ('sore','Soreness / joint feel')}
+        ${readinessQ('energy','Energy and mood')}
+      </div>
+      <button class="pill-btn accent mt12" id="manual-next" onclick="manualProceed(false)">CONTINUE</button>
+      <button class="pill-btn ghost mt8" onclick="manualProceed(true)">DON'T REMEMBER</button>
+    </div>`;
+  readinessAns = {sleep:null, sore:null, energy:null};
+}
+
+function manualProceed(dontRemember){
+  const {sleep,sore,energy} = readinessAns;
+  let r = null;
+  if(!dontRemember){
+    if(!sleep||!sore||!energy){ alertMsg('Answer all three, or tap "Don\'t remember".'); return; }
+    r = computeReadiness(sleep,sore,energy);
+  }
+  const d = manualDraft.date, slot = manualDraft.slot;
+  const base = {readiness:r, date:d, manual:true, editingIndex:null};
+
+  if(slot==='A' || slot==='B'){
+    // A manual strength session renders full set rows so it feeds progression
+    // like any live session. Degraded only if a remembered readiness says so.
+    Nav.toSession(Object.assign({kind:'STRENGTH', letter:slot, degraded: !!(r && r.state==='YELLOW')}, base));
+  } else if(slot==='C'){
+    Nav.toSession(Object.assign({kind:'CARDIO', degraded: !!(r && r.state==='YELLOW')}, base));
+  } else if(slot==='MVS'){
+    Nav.toSession(Object.assign({kind:'MVS_PICK'}, base));
+  } else {
+    Nav.toSession(Object.assign({kind:'REC'}, base));
+  }
+}
+
+function renderManualForEdit(idx){
+  const sessions = store.get('sessions')||[];
+  const s = sessions[idx];
+  if(!s){ Nav.toHistory(); return ''; }
+  const r = s.readiness;
+  const base = {readiness:r, date:s.date, manual:true, editingIndex:idx, existing:s};
+  setTimeout(()=>{
+    if(s.slot==='A' || s.slot==='B'){
+      // Render the full set count, not the YELLOW-reduced one — editing must be
+      // able to reach every set that was actually logged.
+      Nav.toSession(Object.assign({kind:'STRENGTH', letter:s.slot, degraded:false}, base));
+    } else if(s.slot==='C'){
+      Nav.toSession(Object.assign({kind:'CARDIO', degraded:false}, base));
+    } else if(s.slot==='MVS'){
+      Nav.toSession(Object.assign({kind:'MVS', mvsType:s.mvsType||'gym'}, base));
+    } else {
+      Nav.toSession(Object.assign({kind:'REC'}, base));
+    }
+  },0);
+  return `<div class="screen active"><div class="microcopy mt16 center">Opening session…</div></div>`;
+}
+
+/* ================= HISTORY ================= */
+function sessionSummary(s){
+  if(s.slot==='C'){
+    const w=(s.work||[])[0]||{};
+    return `${labelMode(w.mode||'')} · ${s.min||w.min||0} min`;
+  }
+  if(s.slot==='REC') return `Recovery · ${s.min||0} min`;
+  if(s.slot==='MVS') return `MVS ${s.mvsType||''} · ${s.min||0} min`;
+  const n=(s.work||[]).reduce((a,w)=>a+((w.sets||[]).length),0);
+  return `${n} set${n===1?'':'s'} · ${s.min||0} min`;
+}
+
+function renderHistory(){
+  const sessions = (store.get('sessions')||[])
+    .map((s,i)=>({s,i}))
+    .filter(o=>o.s.date >= addDays(todayStr(),-28))
+    .sort((a,b)=> a.s.date < b.s.date ? 1 : (a.s.date > b.s.date ? -1 : 0));
+
+  const rows = sessions.length ? sessions.map(o=>{
+    const s=o.s;
+    const flag = s.manual ? `<span class="badge neutral" style="margin-left:6px;">manual</span>` : '';
+    const state = s.readiness ? s.readiness.state : null;
+    const badge = state ? `<span class="badge ${state.toLowerCase()}">${state}</span>` : `<span class="badge neutral">—</span>`;
+    return `
+      <div class="list-row" style="cursor:pointer;" onclick="openSessionDetail(${o.i})">
+        <div class="list-tile">${s.slot}</div>
+        <div style="flex:1;">
+          <div class="list-title">${fmtDateHeader(s.date)}${flag}</div>
+          <div class="microcopy">${sessionSummary(s)}</div>
+        </div>
+        ${badge}
+      </div>`;
+  }).join('') : `<div class="microcopy mt8">No sessions in the last 28 days.</div>`;
+
+  return `
+    <div class="screen active">
+      <h1 class="title">History</h1>
+      <div class="card">${rows}</div>
+      <button class="pill-btn ghost mt12" onclick="Nav.tab('progress')">BACK TO PROGRESS</button>
+    </div>`;
+}
+
+function openSessionDetail(idx){
+  const sessions = store.get('sessions')||[];
+  const s = sessions[idx];
+  if(!s) return;
+  let work = '';
+  if(s.slot==='A'||s.slot==='B'){
+    const cfg = store.get('config');
+    work = (s.work||[]).map(w=>{
+      const def = findExDef(cfg,w.ex);
+      const sets = (w.sets||[]).map(x=>`${x[0]}×${x[1]}`).join('  ');
+      return `<div class="list-row"><div class="list-title">${def?def.name:w.ex}</div><div class="list-trailing">${sets||'—'}</div></div>`;
+    }).join('');
+  } else {
+    work = `<div class="list-row"><div class="list-title">${sessionSummary(s)}</div></div>`;
+  }
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="screen active">
+      <h1 class="title">${fmtDateHeader(s.date)}</h1>
+      <div class="card">
+        <div class="flex-between">
+          <div class="card-title" style="font-size:17px;">${s.slot}${s.mvsType?' — '+s.mvsType:''}</div>
+          ${s.manual?'<span class="badge neutral">manual</span>':''}
+        </div>
+        <div class="microcopy mt8">RPE ${s.rpe||'—'} · ${s.min||0} min · readiness ${s.readiness?s.readiness.state:'not recorded'}</div>
+        ${s.note?`<div class="microcopy mt8">"${s.note}"</div>`:''}
+      </div>
+      <div class="card">${work}</div>
+      <button class="pill-btn accent mt12" onclick="Nav.toManual({editingIndex:${idx}})">EDIT</button>
+      <button class="pill-btn ghost mt8" onclick="deleteSession(${idx})">DELETE</button>
+      <button class="pill-btn ghost mt16" onclick="Nav.toHistory()">BACK</button>
+    </div>`;
+}
+
+function deleteSession(idx){
+  confirmSheet('Delete this session?',
+    'It comes out of your streak and consistency, and lift weights recalculate from what remains.',
+    'DELETE', 'CANCEL',
+    ()=>{
+      const sessions = store.get('sessions')||[];
+      sessions.splice(idx,1);
+      store.set('sessions', sessions);
+      recomputeLifts();
+      Nav.toHistory();
+    });
+}
+
 /* ================= PROGRESS ================= */
 function renderProgress(){
   const sessions = store.get('sessions')||[];
@@ -1034,8 +1644,12 @@ function renderProgress(){
   // 4-week consistency
   const since = addDays(todayStr(), -28);
   const recent = sessions.filter(s=>s.date>=since && s.slot!=='SKIP');
-  const scheduledCount = 24; // 6/week * 4 weeks, approx per system design (app computes from schedule ideally)
-  const consistency = Math.min(100, Math.round((recent.length/scheduledCount)*100));
+  // Denominator computed from the schedule, not hardcoded — a partial history,
+  // a changed schedule, or a deleted session all have to report honestly.
+  const scheduledCount = scheduledCountLast28();
+  const consistency = scheduledCount
+    ? Math.min(100, Math.round((recent.length/scheduledCount)*100))
+    : 0;
   const streak = currentStreak();
 
   const bwSpark = sparkline(daily.slice(-56).map(d=>({x:d.date,y:d.bw})), '--accent');
@@ -1069,7 +1683,9 @@ function renderProgress(){
           <div class="stat-block"><div class="stat-label">4-wk consistency</div><div class="stat-value">${consistency}%</div></div>
           <div class="stat-block"><div class="stat-label">Streak</div><div class="stat-value">${streak}</div></div>
         </div>
+        <div class="microcopy mt8 center">${recent.length} of ${scheduledCount} scheduled</div>
       </div>
+      <button class="pill-btn ghost" onclick="Nav.toHistory()">VIEW &amp; EDIT HISTORY</button>
       <div class="card">
         <div class="card-title" style="font-size:17px;">Weight — 7-day avg (8 wk)</div>
         ${daily.length ? bwSpark : '<div class="microcopy mt8">No data yet.</div>'}
@@ -1154,6 +1770,7 @@ function applyProgramImport(raw){
   if(!cfg.schedule || !cfg.workouts){ alertMsg('Config missing schedule/workouts.'); return; }
   if(confirm('Overwrite current program with imported config?')){
     store.set('config', cfg);
+    recomputeLifts();   // new startWeights change what the log implies
     alertMsg('Program imported.');
     Screens.render('settings');
   }
@@ -1206,6 +1823,10 @@ function applyRestore(raw){
   store.set('daily', data.daily||[]);
   store.set('weekly', data.weekly||[]);
   store.set('meta', data.meta||{startDate:todayStr(), appVersion:APP_VERSION, lastBackup:null});
+  // A restored store must not inherit this device's half-finished session, and
+  // lifts are rebuilt from the restored log rather than trusting the backup's copy.
+  clearActive(); sessionState=null;
+  recomputeLifts();
   alertMsg('Restored.');
   Nav.home();
 }
@@ -1213,7 +1834,8 @@ function applyRestore(raw){
 function resetAllData(){
   const val = document.getElementById('delete-confirm').value;
   if(val!=='DELETE'){ alertMsg('Type DELETE exactly to confirm.'); return; }
-  ['config','lifts','sessions','daily','weekly','meta'].forEach(k=>localStorage.removeItem('wos.'+k));
+  ['config','lifts','sessions','daily','weekly','meta','active'].forEach(k=>localStorage.removeItem('wos.'+k));
+  sessionState = null;
   ensureInit();
   Nav.home();
 }
@@ -1237,6 +1859,8 @@ function afterRender(name, params){
 /* ================= boot ================= */
 ensureInit();
 Nav.home();
+// An unfinished session from a previous day gets offered, never silently dropped.
+checkStaleActive();
 </script>
 </body>
 </html>
