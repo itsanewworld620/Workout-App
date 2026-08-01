@@ -139,9 +139,6 @@ input[type=text], input[type=number]{background:var(--surface-2); border:none; b
 .badge.red{background:var(--red); color:#fff;}
 .badge.neutral{background:var(--chip); color:var(--text-2);}
 .nogym-link{display:inline-block; margin-top:12px; color:#fff; opacity:0.9; text-decoration:underline; font-weight:600; cursor:pointer;}
-.stepper{display:flex; align-items:center; gap:14px; justify-content:center; margin:16px 0;}
-.stepper button{width:52px; height:52px; border-radius:50%; background:var(--chip); border:none; color:#fff; font-size:26px; font-weight:700;}
-.stepper .val{font-size:40px; font-weight:700; min-width:70px; text-align:center;}
 .modal-backdrop{position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:flex-end; justify-content:center; z-index:50;}
 .modal-sheet{background:var(--surface); width:100%; max-width:520px; border-radius:20px 20px 0 0; padding:20px; padding-bottom:calc(24px + var(--safe-b));}
 .link{color:var(--accent); font-weight:600; cursor:pointer; text-decoration:none;}
@@ -169,7 +166,7 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
 
 <script>
 'use strict';
-const APP_VERSION = '1.5.3';
+const APP_VERSION = '1.6.0';
 
 /* ---------- wall-clock timers ----------
    All in-session timers derive their value from Date.now() timestamps, never
@@ -209,14 +206,15 @@ function makeCountUp(displayId, toggleBtnId){
     }
   };
 }
-const cardioTimer  = makeCountUp('cardio-timer','cardio-toggle');
-const recTimer     = makeCountUp('rec-timer','rec-toggle');
-const outdoorTimer = makeCountUp('outdoor-timer','outdoor-toggle');
+const cardioTimer   = makeCountUp('cardio-timer','cardio-toggle');
+const recTimer      = makeCountUp('rec-timer','rec-toggle');
+const outdoorTimer  = makeCountUp('outdoor-timer','outdoor-toggle');
+const finisherTimer = makeCountUp('finisher-timer','finisher-toggle');
 
 function refreshTimers(){
   try{
     if(restEndAt!=null) renderRestTimer();
-    cardioTimer.render(); recTimer.render(); outdoorTimer.render();
+    cardioTimer.render(); recTimer.render(); outdoorTimer.render(); finisherTimer.render();
   }catch(e){}
 }
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) refreshTimers(); });
@@ -269,7 +267,13 @@ function recomputeLifts(){
 
   const allEx = [];
   for(const k in cfg.workouts) (cfg.workouts[k]||[]).forEach(e=>allEx.push(e));
-  allEx.forEach(ex=>{ lifts[ex.id] = { weight: ex.startWeight||0, lastReps: [] }; });
+  // Shape (v1.6.0): weight = next GREEN target (last actual + increment when the
+  // lift advanced), lastWeight = what was actually lifted, lastReps = actual reps
+  // per set, advanced = whether double progression fired. lastWeight/lastReps
+  // exist so YELLOW and soreness-freeze sessions can pre-fill *without* the bump
+  // (§4: no load progression on those days) and so reps carry forward instead of
+  // resetting to repLo every session.
+  allEx.forEach(ex=>{ lifts[ex.id] = { weight: ex.startWeight||0, lastWeight: null, lastReps: [], advanced: false }; });
 
   const sessions = (store.get('sessions')||[]).slice()
     .sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
@@ -280,15 +284,40 @@ function recomputeLifts(){
       if(!w.sets || !w.sets.length) return;
       const exDef = findExDef(cfg, w.ex);
       if(!exDef) return;
-      const increment = exDef.incrementLb || 5;
-      let weight = w.sets[0][0];
-      if(progressionAdvances(exDef, w.sets)) weight = weight + increment;
-      lifts[w.ex] = { weight, lastReps: w.sets.map(x=>x[1]) };
+      // incrementLb:0 is a real value meaning "never add load" (dead bug). The
+      // old `|| 5` fallback turned 0 into 5 and quietly progressed a bodyweight
+      // core drill — visible in the 07-31 backup as dead_bug at 15 lb.
+      const increment = (exDef.incrementLb!=null ? exDef.incrementLb : 5);
+      const lastWeight = w.sets[0][0];
+      const advanced = progressionAdvances(exDef, w.sets) && increment>0;
+      lifts[w.ex] = {
+        weight: advanced ? lastWeight + increment : lastWeight,
+        lastWeight,
+        lastReps: w.sets.map(x=>x[1]),
+        lastSets: w.sets.map(x=>[x[0],x[1]]),
+        advanced
+      };
     });
   });
 
   store.set('lifts', lifts);
   return lifts;
+}
+
+/* §4 soreness freeze: soreness answer ≤2 (stored scale, 1 = very sore) on two
+   sessions running freezes all loads for one week from the second session.
+   Readiness:null sessions are skipped — never invent a readiness number. */
+function sorenessFreezeActive(dateStr){
+  const ss = (store.get('sessions')||[])
+    .filter(s=>s.readiness && s.readiness.sore!=null)
+    .slice()
+    .sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+  for(let i=ss.length-1; i>0; i--){
+    const freezeEnd = addDays(ss[i].date, 7);
+    if(freezeEnd <= dateStr) break;   // older pairs can't cover this date
+    if(ss[i].readiness.sore<=2 && ss[i-1].readiness.sore<=2) return true;
+  }
+  return false;
 }
 
 /* ---------- live session persistence ----------
@@ -308,17 +337,22 @@ function persistActive(screen){
     note: sessionState.note || '',
     manual: !!sessionState.manual,
     editingIndex: (sessionState.editingIndex!=null ? sessionState.editingIndex : null),
-    exercises: sessionState.exercises ? sessionState.exercises.map(r=>({ex:r.ex, weight:r.weight, sets:r.sets})) : null,
+    exercises: sessionState.exercises ? sessionState.exercises.map(r=>({ex:r.ex, weight:r.weight, sets:r.sets, prefillReps:r.prefillReps||null, prefillWeights:r.prefillWeights||null})) : null,
     mvsItems: sessionState.mvsItems || null,
     recChecks: sessionState.recChecks || null,
     mode: sessionState.mode || null,
     min: sessionState.min!=null ? sessionState.min : null,
+    vest: sessionState.vest!=null ? sessionState.vest : null,
+    finisherMode: sessionState.finisherMode || null,
+    finisherMin: sessionState.finisherMin!=null ? sessionState.finisherMin : null,
+    frozen: !!sessionState.frozen,
     finishDraft: sessionState.finishDraft || null,
     rpe: (typeof selectedRPE!=='undefined' ? selectedRPE : null),
     timers: {
       cardio: cardioTimer.serialize(),
       rec: recTimer.serialize(),
-      outdoor: outdoorTimer.serialize()
+      outdoor: outdoorTimer.serialize(),
+      finisher: finisherTimer.serialize()
     }
   };
   store.set('active', snap);
@@ -699,6 +733,7 @@ function resumeActive(){
   cardioTimer.restore(a.timers && a.timers.cardio);
   recTimer.restore(a.timers && a.timers.rec);
   outdoorTimer.restore(a.timers && a.timers.outdoor);
+  finisherTimer.restore(a.timers && a.timers.finisher);
   if(a.screen==='finish' && a.finishDraft){
     sessionState = restoreSessionState(a);
     selectedRPE = a.rpe!=null ? a.rpe : null;
@@ -712,6 +747,10 @@ function restoreSessionState(a){
   return {
     variant: a.variant, work: [], startedAt: a.startedAt,
     restEndAt: a.restEndAt, mode: a.mode, min: a.min, note: a.note||'',
+    vest: (a.vest!=null ? a.vest : null),
+    finisherMode: a.finisherMode||null,
+    finisherMin: (a.finisherMin!=null ? a.finisherMin : null),
+    frozen: !!a.frozen,
     exercises: a.exercises||null, mvsItems: a.mvsItems||null,
     recChecks: a.recChecks||null, date: a.date, manual: !!a.manual,
     editingIndex: (a.editingIndex!=null ? a.editingIndex : null),
@@ -740,6 +779,7 @@ function checkStaleActive(){
       cardioTimer.restore(a.timers && a.timers.cardio);
       recTimer.restore(a.timers && a.timers.rec);
       outdoorTimer.restore(a.timers && a.timers.outdoor);
+      finisherTimer.restore(a.timers && a.timers.finisher);
       sessionState = restoreSessionState(a);
       const draft = a.finishDraft || buildDraftFromActive(a);
       selectedRPE = a.rpe!=null ? a.rpe : null;
@@ -760,9 +800,13 @@ function buildDraftFromActive(a){
       target: `${row.ex.sets||3}x${row.ex.repLo}-${row.ex.repHi}@${row.weight||row.ex.startWeight||0}`,
       sets: (row.sets||[]).filter(Boolean).map(s=>[s.weight,s.reps])
     }));
+    const fm = a.finisherMin!=null ? a.finisherMin : 0;
+    if(fm>0) base.finisher = { mode: a.finisherMode||'incline_walk', min: fm };
   } else if(v.kind==='CARDIO'){
     base.slot = 'C';
-    base.work = [{mode: a.mode||'incline_walk', min: cardioTimer.minutes()||20}];
+    const cw = {mode: a.mode||'incline_walk', min: cardioTimer.minutes()||20};
+    if(a.vest!=null && a.vest>0) cw.vest = a.vest;
+    base.work = [cw];
   } else if(v.kind==='MVS' && v.mvsType==='outdoor'){
     base.slot='MVS'; base.mvsType='outdoor'; base.min = outdoorTimer.minutes()||20;
   } else if(v.kind==='MVS'){
@@ -777,10 +821,23 @@ function buildDraftFromActive(a){
 
 function readinessQ(key,label){
   let dots='';
-  for(let i=1;i<=5;i++){
-    dots += `<button class="dot" data-key="${key}" data-val="${i}" onclick="setReadiness('${key}',${i})">${i}</button>`;
+  if(key==='sore'){
+    /* Soreness reads as an AMOUNT of soreness: 5 (very sore) … 1 (fresh), with
+       1 on the right so "good" sits on the right like the other rows (Joel,
+       2026-07-31). Display-only flip: the STORED value is 6 − displayed, so
+       stored semantics (1 = very sore, 5 = fresh), the score math, the
+       sore-forces-RED override, and every §4 rule read old and new records
+       identically. data-val carries the stored value. */
+    for(let d=5; d>=1; d--){
+      dots += `<button class="dot" data-key="sore" data-val="${6-d}" onclick="setReadiness('sore',${6-d})">${d}</button>`;
+    }
+  } else {
+    for(let i=1;i<=5;i++){
+      dots += `<button class="dot" data-key="${key}" data-val="${i}" onclick="setReadiness('${key}',${i})">${i}</button>`;
+    }
   }
-  return `<div class="readiness-q"><div class="readiness-label">${label}</div><div class="dots">${dots}</div></div>`;
+  const hint = key==='sore' ? `<div class="microcopy" style="margin-top:6px;">5 = very sore · 1 = fresh</div>` : '';
+  return `<div class="readiness-q"><div class="readiness-label">${label}</div><div class="dots">${dots}</div>${hint}</div>`;
 }
 
 function setReadiness(key,val){
@@ -892,6 +949,12 @@ function renderSession(variant, restored){
                      mode: (variant && variant.existing && (variant.existing.work||[])[0])
                            ? (variant.existing.work[0].mode || null) : null,
                      min: (variant && variant.existing) ? (variant.existing.min!=null ? variant.existing.min : null) : null,
+                     vest: (variant && variant.existing && (variant.existing.work||[])[0] && variant.existing.work[0].vest!=null)
+                           ? variant.existing.work[0].vest : null,
+                     finisherMode: (variant && variant.existing && variant.existing.finisher)
+                           ? (variant.existing.finisher.mode||null) : null,
+                     finisherMin: (variant && variant.existing && variant.existing.finisher && variant.existing.finisher.min!=null)
+                           ? variant.existing.finisher.min : null,
                      note: (variant && variant.existing) ? (variant.existing.note||'') : '',
                      date: (variant && variant.date) || todayStr(),
                      manual: !!(variant && variant.manual),
@@ -909,10 +972,28 @@ function renderSession(variant, restored){
   return html;
 }
 
+/* Pre-fill reps for an unlogged set: last session's reps for that set index
+   (falling back to the last set's number when this session has more sets),
+   unless the row was built post-advance — then it's back to repLo (§5 reset). */
+function prefillRepsFor(row, s){
+  const ex = row.ex;
+  const arr = row.prefillReps;
+  if(arr && arr.length) return (arr[s]!=null ? arr[s] : arr[arr.length-1]);
+  return ex.repHi==null ? (ex.durationSec||0) : (ex.repLo||8);
+}
+/* Per-set weight carry: a mid-exercise weight drop (row 80 → 60 on 07-31) must
+   pre-fill per set, not smear the first set's weight across all of them. */
+function prefillWeightFor(row, s){
+  const arr = row.prefillWeights;
+  if(arr && arr.length) return (arr[s]!=null ? arr[s] : arr[arr.length-1]);
+  return row.weight || (row.ex.startWeight||0);
+}
+
 function renderStrengthSession(variant){
   const cfg = store.get('config');
   const list = (cfg && cfg.workouts && cfg.workouts[variant.letter]) || [];
   const lifts = store.get('lifts') || {};
+  if(!(sessionState && sessionState.restored)) finisherTimer.reset();
   // Only build fresh exercise rows if we aren't resuming — a restored session
   // already carries its logged sets and must not be reset to empty.
   if(!sessionState.exercises){
@@ -922,18 +1003,42 @@ function renderStrengthSession(variant){
     if(variant.existing){
       (variant.existing.work||[]).forEach(w=>{ prior[w.ex] = w.sets||[]; });
     }
+    /* Auto-carry + rules-compliant targets (v1.6.0):
+       - lift never performed → startWeight @ repLo (calibration).
+       - advanced last session AND today may progress → bumped weight, reps reset
+         to repLo (double progression, §5).
+       - otherwise → last session's actual weight and actual reps, verbatim.
+       Progression is gated by §4: YELLOW = no bump; soreness freeze = no bump.
+       The gate lives here, at render, because the bump itself is baked into the
+       lifts cache — through v1.5.3 YELLOW sessions showed the bumped weight,
+       which was a live rule violation. */
+    const frozen = sorenessFreezeActive(sessionState.date || todayStr());
+    sessionState.frozen = frozen;
+    const allowBump = !variant.degraded && !frozen;
     sessionState.exercises = list.map(ex=>{
-      const st = lifts[ex.id] || {weight: null, lastReps:[]};
+      const st = lifts[ex.id] || {weight:null, lastWeight:null, lastReps:[], advanced:false};
       const saved = prior[ex.id];
       if(saved){
-        return { ex, weight: saved.length ? saved[0][0] : st.weight,
+        return { ex, weight: saved.length ? saved[0][0] : (st.lastWeight!=null?st.lastWeight:st.weight),
+                 prefillReps: null,
                  sets: saved.map(s=>({weight:s[0], reps:s[1]})) };
       }
-      return {ex, weight: st.weight, sets: []};
+      if(st.lastWeight==null){
+        return {ex, weight: (st.weight!=null ? st.weight : (ex.startWeight||0)), prefillReps: null, prefillWeights: null, sets: []};
+      }
+      if(st.advanced && allowBump){
+        return {ex, weight: st.weight, prefillReps: null, prefillWeights: null, sets: []};
+      }
+      return {ex, weight: st.lastWeight,
+              prefillReps: (st.lastReps||[]).slice(),
+              prefillWeights: (st.lastSets||[]).map(x=>x[0]),
+              sets: []};
     });
   }
 
   const stripe = variant.degraded ? `<span class="badge yellow">YELLOW — modified</span>` : `<span class="badge green">GREEN</span>`;
+  const frozenNote = sessionState.frozen
+    ? `<div class="banner">Soreness rule active — all loads frozen this week. Numbers repeat last session.</div>` : '';
 
   let exHtml = sessionState.exercises.map((row,idx)=>{
     const ex = row.ex;
@@ -944,11 +1049,11 @@ function renderStrengthSession(variant){
     let setsHtml='';
     for(let s=0;s<numSets;s++){
       const done = (row.sets||[])[s];
-      const wShown = done ? done.weight : weight;
-      const rShown = done ? done.reps : '–';
+      const wShown = done ? done.weight : prefillWeightFor(row, s);
+      const rShown = done ? done.reps : prefillRepsFor(row, s);
       setsHtml += `
         <div class="set-row" data-ex="${idx}" data-set="${s}">
-          <button class="tap-circle${done?' logged':''}" id="circ-${idx}-${s}" onclick="logSet(${idx},${s},${weight},${ex.repLo||ex.durationSec||0})">
+          <button class="tap-circle${done?' logged':''}" id="circ-${idx}-${s}" onclick="logSet(${idx},${s})">
             <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>
           </button>
           <span class="set-num">${s+1}</span>
@@ -961,7 +1066,9 @@ function renderStrengthSession(variant){
     }
     return `
       <div class="card ex-card">
-        <div class="card-header"><div class="card-title">${ex.name}</div></div>
+        <div class="card-header">
+          <div class="card-title" style="cursor:pointer;" onclick="openLiftHistory('${ex.id}')">${ex.name} <span class="chevron">›</span></div>
+        </div>
         <div class="ex-cue">${ex.cue||''}</div>
         <div class="ex-target">${numSets} × ${repRange} @ ${weight} lb</div>
         ${setsHtml}
@@ -974,8 +1081,10 @@ function renderStrengthSession(variant){
         <h1 class="title" style="margin-bottom:0;">Session</h1>
         ${stripe}
       </div>
+      ${frozenNote}
       <div id="rest-timer-wrap"></div>
       ${exHtml}
+      ${finisherCard()}
     </div>
     <div class="sticky-bar"><div class="sticky-bar-inner">
       <button class="pill-btn accent" onclick="finishStrengthSession()">FINISH SESSION</button>
@@ -983,55 +1092,152 @@ function renderStrengthSession(variant){
   `;
 }
 
-function logSet(exIdx, setIdx, weight, reps){
+/* Finisher (system-design §1): every strength session ends with 8–12 min of
+   incline walk or carries. Always rendered, on YELLOW too (Joel's call,
+   2026-07-31 — it's easy walking, not load). Mode is a picker; last-used wins
+   next time. Typed minutes beat the timer, same rule as every timed screen. */
+function finisherCard(){
+  const prefs = store.get('prefs')||{};
+  if(!sessionState.finisherMode) sessionState.finisherMode = prefs.finisherMode || 'incline_walk';
+  const m = sessionState.finisherMode;
+  const v = sessionState.finisherMin!=null ? sessionState.finisherMin : '';
+  return `
+    <div class="card" id="finisher-card">
+      <div class="card-header">
+        <div class="card-title" style="font-size:17px;">Finisher</div>
+        <span class="badge neutral">8–12 min</span>
+      </div>
+      <div class="microcopy" style="margin-bottom:10px;">Part of the session — easy effort.</div>
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <button class="chip" id="fin-mode-walk" onclick="setFinisherMode('incline_walk')" style="${m==='incline_walk'?'background:var(--accent);color:#fff;':''}">Incline walk</button>
+        <button class="chip" id="fin-mode-carry" onclick="setFinisherMode('carry')" style="${m==='carry'?'background:var(--accent);color:#fff;':''}">Carries</button>
+      </div>
+      <div class="center">
+        <div class="timer-pill" id="finisher-timer">00:00</div>
+        <div class="mt12"><button class="pill-btn accent small" id="finisher-toggle" onclick="toggleFinisherTimer()">START</button></div>
+      </div>
+      <div class="bw-row mt12">
+        <input type="number" inputmode="numeric" id="finisher-min" class="bw-input" placeholder="min" value="${v}" oninput="setFinisherMin(this.value)">
+        <span class="bw-avg">or type the minutes</span>
+      </div>
+    </div>`;
+}
+function setFinisherMode(m){
+  if(!sessionState) return;
+  sessionState.finisherMode = m;
+  const prefs = store.get('prefs')||{};
+  prefs.finisherMode = m;
+  store.set('prefs', prefs);
+  const w = document.getElementById('fin-mode-walk'), c = document.getElementById('fin-mode-carry');
+  if(w) w.style.cssText = m==='incline_walk' ? 'background:var(--accent);color:#fff;' : '';
+  if(c) c.style.cssText = m==='carry' ? 'background:var(--accent);color:#fff;' : '';
+  persistActive('session');
+}
+function toggleFinisherTimer(){ finisherTimer.toggle(); persistActive('session'); }
+function setFinisherMin(v){
+  if(!sessionState) return;
+  const n = parseInt(v);
+  sessionState.finisherMin = (v==='' || isNaN(n)) ? null : n;
+  persistActive('session');
+}
+
+/* Exercise history — tap a lift's name on the Session screen. Read-only. */
+function openLiftHistory(exId){
+  const cfg = store.get('config');
+  const def = findExDef(cfg, exId);
+  const unit = def && def.repHi==null ? 's' : '';
+  const rows = (store.get('sessions')||[])
+    .filter(s=>s.slot==='A'||s.slot==='B')
+    .slice()
+    .sort((a,b)=> a.date < b.date ? 1 : (a.date > b.date ? -1 : 0))
+    .map(s=>{
+      const w = (s.work||[]).find(x=>x.ex===exId);
+      if(!w || !w.sets || !w.sets.length) return null;
+      const sets = w.sets.map(x=>`${x[0]}×${x[1]}${unit}`).join('  ');
+      return `<div class="list-row"><div class="list-title" style="font-size:15px;">${fmtShortDate(s.date)}</div><div class="list-trailing">${sets}</div></div>`;
+    })
+    .filter(Boolean)
+    .slice(0,12)
+    .join('');
+  const backdrop = document.createElement('div');
+  backdrop.className='modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal-sheet">
+      <div class="card-title" style="font-size:20px;">${def?def.name:exId}</div>
+      <div class="microcopy mt8">weight × reps per set, newest first</div>
+      <div class="mt12">${rows || '<div class="microcopy">No history yet.</div>'}</div>
+      <button class="pill-btn ghost mt16" id="lh-close">CLOSE</button>
+    </div>`;
+  document.body.appendChild(backdrop);
+  backdrop.querySelector('#lh-close').onclick = ()=>{ document.body.removeChild(backdrop); };
+}
+
+function logSet(exIdx, setIdx){
+  const row = sessionState.exercises[exIdx];
   const circ = document.getElementById(`circ-${exIdx}-${setIdx}`);
+  const wchip = document.getElementById(`wchip-${exIdx}-${setIdx}`);
   const rchip = document.getElementById(`rchip-${exIdx}-${setIdx}`);
   circ.classList.add('logged');
-  rchip.textContent = reps;
-  sessionState.exercises[exIdx].sets[setIdx] = {weight, reps};
-  const restSec = sessionState.exercises[exIdx].ex.restSec || 90;
+  // Log at whatever the chips show — the pre-fill, or a number already edited.
+  const w = parseFloat(wchip.textContent); const r = parseFloat(rchip.textContent);
+  const weight = isNaN(w) ? (row.weight||0) : w;
+  const reps = isNaN(r) ? prefillRepsFor(row, setIdx) : r;
+  row.sets[setIdx] = {weight, reps};
+  const restSec = row.ex.restSec || 90;
   startRestTimer(restSec);
   persistActive('session');
 }
 
 function editSet(exIdx, setIdx, field){
-  const current = (sessionState.exercises[exIdx].sets[setIdx]) || {
-    weight: parseInt(document.getElementById(`wchip-${exIdx}-${setIdx}`).textContent)||0,
-    reps: parseInt(document.getElementById(`rchip-${exIdx}-${setIdx}`).textContent)||0
+  const row = sessionState.exercises[exIdx];
+  const current = (row.sets[setIdx]) || {
+    weight: parseFloat(document.getElementById(`wchip-${exIdx}-${setIdx}`).textContent)||row.weight||0,
+    reps: parseFloat(document.getElementById(`rchip-${exIdx}-${setIdx}`).textContent)||prefillRepsFor(row,setIdx)
   };
-  openStepper(field==='weight'?current.weight:current.reps, field==='weight'?5:1, (val)=>{
+  const isDur = row.ex.repHi==null;
+  const label = field==='weight' ? 'Weight (lb)' : (isDur ? 'Seconds' : 'Reps');
+  openNumpad(field==='weight'?current.weight:current.reps, (val)=>{
     if(field==='weight'){
       document.getElementById(`wchip-${exIdx}-${setIdx}`).textContent = val;
     } else {
       document.getElementById(`rchip-${exIdx}-${setIdx}`).textContent = val;
       document.getElementById(`circ-${exIdx}-${setIdx}`).classList.add('logged');
     }
-    const w = parseInt(document.getElementById(`wchip-${exIdx}-${setIdx}`).textContent)||0;
-    const r = parseInt(document.getElementById(`rchip-${exIdx}-${setIdx}`).textContent)||0;
-    sessionState.exercises[exIdx].sets[setIdx] = {weight:w, reps:r};
+    const w = parseFloat(document.getElementById(`wchip-${exIdx}-${setIdx}`).textContent)||0;
+    const r = parseFloat(document.getElementById(`rchip-${exIdx}-${setIdx}`).textContent)||0;
+    row.sets[setIdx] = {weight:w, reps:r};
     persistActive('session');
-  });
+  }, {label, decimal: field==='weight'});
 }
 
-function openStepper(startVal, step, onSave){
+/* Tap the number, type the number. Replaced the +/− stepper in v1.6.0 —
+   pre-filled values mean the common case is no edit at all, and when an edit
+   is needed, typing beats tapping +5 eleven times. */
+function openNumpad(startVal, onSave, opts){
+  opts = opts||{};
   const backdrop = document.createElement('div');
   backdrop.className='modal-backdrop';
   backdrop.innerHTML = `
     <div class="modal-sheet">
-      <div class="stepper">
-        <button onclick="Stepper.dec()">−</button>
-        <div class="val" id="stepper-val">${startVal}</div>
-        <button onclick="Stepper.inc()">+</button>
+      ${opts.label?`<div class="card-title" style="font-size:17px;">${opts.label}</div>`:''}
+      <div class="center mt12">
+        <input type="number" inputmode="${opts.decimal?'decimal':'numeric'}" id="numpad-input" class="bw-input"
+               style="width:160px; font-size:32px;" value="${startVal!=null?startVal:''}">
       </div>
-      <button class="pill-btn accent" onclick="Stepper.save()">SAVE</button>
+      <button class="pill-btn accent mt16" id="numpad-save">SAVE</button>
+      <button class="pill-btn ghost mt8" id="numpad-cancel">CANCEL</button>
     </div>`;
   document.body.appendChild(backdrop);
-  window.Stepper = {
-    val: startVal, step,
-    inc(){ this.val+=this.step; document.getElementById('stepper-val').textContent=this.val; },
-    dec(){ this.val=Math.max(0,this.val-this.step); document.getElementById('stepper-val').textContent=this.val; },
-    save(){ onSave(this.val); document.body.removeChild(backdrop); }
+  const inp = backdrop.querySelector('#numpad-input');
+  setTimeout(()=>{ try{ inp.focus(); inp.select(); }catch(e){} }, 60);
+  const close = ()=>{ if(backdrop.parentNode) document.body.removeChild(backdrop); };
+  backdrop.querySelector('#numpad-save').onclick = ()=>{
+    const v = parseFloat(inp.value);
+    close();
+    if(!isNaN(v) && v>=0) onSave(v);
   };
+  backdrop.querySelector('#numpad-cancel').onclick = close;
+  inp.addEventListener('keydown', e=>{ if(e.key==='Enter') backdrop.querySelector('#numpad-save').click(); });
 }
 
 let restTimerInterval = null;
@@ -1077,23 +1283,42 @@ function beep(){
 }
 
 function finishStrengthSession(){
-  clearInterval(restTimerInterval); restTimerInterval=null; restEndAt=null;
-  const work = sessionState.exercises.map(row=>({
-    ex: row.ex.id,
-    target: `${row.ex.sets||3}x${row.ex.repLo}-${row.ex.repHi}@${row.weight||row.ex.startWeight||0}`,
-    sets: row.sets.filter(Boolean).map(s=>[s.weight,s.reps])
-  }));
-  const draft = {
-    date: sessionState.date || todayStr(),
-    slot: sessionState.variant.letter,
-    readiness: sessionState.variant.readiness,
-    work,
-    startedAt: sessionState.startedAt
+  finisherTimer.stop();
+  const fMin = sessionState.finisherMin!=null
+    ? sessionState.finisherMin
+    : (finisherTimer.elapsedSec()>0 ? finisherTimer.minutes() : 0);
+  const proceed = ()=>{
+    clearInterval(restTimerInterval); restTimerInterval=null; restEndAt=null;
+    const work = sessionState.exercises.map(row=>({
+      ex: row.ex.id,
+      target: `${row.ex.sets||3}x${row.ex.repLo}-${row.ex.repHi}@${row.weight||row.ex.startWeight||0}`,
+      sets: row.sets.filter(Boolean).map(s=>[s.weight,s.reps])
+    }));
+    const draft = {
+      date: sessionState.date || todayStr(),
+      slot: sessionState.variant.letter,
+      readiness: sessionState.variant.readiness,
+      work,
+      startedAt: sessionState.startedAt
+    };
+    if(fMin>0) draft.finisher = { mode: sessionState.finisherMode||'incline_walk', min: fMin };
+    // A manual session has no timer to trust; seed a plausible duration and let
+    // the Finish screen's editable field carry the real number.
+    if(sessionState.manual){ draft.manual = true; draft.min = 45 + fMin; }
+    finisherTimer.reset();
+    Nav.toFinish(draft);
   };
-  // A manual session has no timer to trust; seed a plausible duration and let
-  // the Finish screen's editable field carry the real number.
-  if(sessionState.manual){ draft.manual = true; draft.min = 45; }
-  Nav.toFinish(draft);
+  // The finisher is part of every strength session (§1) and Joel made it
+  // non-skippable. Zero minutes gets one nudge, not a wall — the record stays
+  // honest either way.
+  if(fMin<=0){
+    confirmSheet('No finisher logged',
+      'Every strength session ends with 8–12 min of walking or carries. Log it, or finish without one?',
+      'BACK TO SESSION', 'FINISH WITHOUT',
+      ()=>{}, proceed);
+    return;
+  }
+  proceed();
 }
 
 function renderCardioSession(variant){
@@ -1123,6 +1348,7 @@ function renderCardioSession(variant){
           <button class="pill-btn accent small" id="cardio-toggle" onclick="toggleCardioTimer()">START</button>
         </div>
       </div>
+      ${vestCard()}
       ${manualTimeCard()}
     </div>
     <div class="sticky-bar"><div class="sticky-bar-inner">
@@ -1131,7 +1357,7 @@ function renderCardioSession(variant){
   `;
 }
 function labelMode(m){
-  const map={incline_walk:'Incline walk', bike:'Bike', rower:'Rower', stairs:'Stairs'};
+  const map={incline_walk:'Incline walk', bike:'Bike', rower:'Rower', stairs:'Stairs', carry:'Carries'};
   return map[m]||m;
 }
 
@@ -1166,6 +1392,42 @@ function resolveMinutes(timer, fallback){
   if(timer && timer.elapsedSec()>0) return timer.minutes();
   return fallback;
 }
+/* Weighted vest (v1.6.0, Joel's request). Field starts blank so a vest-less
+   walk never silently logs one; the saved default is one tap away. Typing a
+   weight makes it the new default. Blank = no vest. */
+function vestCard(){
+  const prefs = store.get('prefs')||{};
+  const v = sessionState && sessionState.vest!=null ? sessionState.vest : '';
+  const chip = (prefs.vestLb && v==='')
+    ? `<button class="chip" id="vest-chip" onclick="applyVestDefault()">Vest ${prefs.vestLb} lb</button>` : '';
+  return `
+    <div class="card">
+      <div class="card-title" style="font-size:17px;margin-bottom:8px;">Weighted vest</div>
+      <div class="bw-row">
+        <input type="number" inputmode="decimal" id="vest-lb" class="bw-input" placeholder="none"
+               value="${v}" oninput="setVest(this.value)">
+        <span class="bw-avg">lb</span>
+        ${chip}
+      </div>
+      <div class="microcopy mt8">Blank = no vest. A typed weight becomes your default.</div>
+    </div>`;
+}
+function setVest(v){
+  if(!sessionState) return;
+  const n = parseFloat(v);
+  sessionState.vest = (v==='' || isNaN(n)) ? null : n;
+  persistActive('session');
+}
+function applyVestDefault(){
+  const prefs = store.get('prefs')||{};
+  if(!prefs.vestLb || !sessionState) return;
+  sessionState.vest = prefs.vestLb;
+  const el = document.getElementById('vest-lb');
+  if(el) el.value = prefs.vestLb;
+  const chip = document.getElementById('vest-chip');
+  if(chip) chip.remove();
+  persistActive('session');
+}
 function setCardioMode(v){ if(sessionState){ sessionState.mode = v; persistActive('session'); } }
 function toggleCardioTimer(){ cardioTimer.toggle(); persistActive('session'); }
 function finishCardioSession(defaultMin){
@@ -1173,11 +1435,18 @@ function finishCardioSession(defaultMin){
   const el = document.getElementById('cardio-mode');
   const mode = el ? el.value : (sessionState.mode||'incline_walk');
   const minutes = resolveMinutes(cardioTimer, defaultMin);
+  const cw = {mode, min: minutes};
+  if(sessionState.vest!=null && sessionState.vest>0){
+    cw.vest = sessionState.vest;
+    const prefs = store.get('prefs')||{};
+    prefs.vestLb = sessionState.vest;    // last worn weight becomes the default
+    store.set('prefs', prefs);
+  }
   const draft = {
     date: sessionState.date || todayStr(),
     slot: 'C',
     readiness: sessionState.variant.readiness,
-    work: [{mode, min: minutes}],
+    work: [cw],
     // Always carry the duration on the draft. Cardio has no meaningful
     // wall-clock elapsed (the session screen is a mode picker), so falling
     // through to Date.now()-startedAt seeded the Finish screen with 1 min.
@@ -1465,6 +1734,7 @@ function saveSession(elapsedMin){
     note
   };
   if(finishDraft.mvsType) rec.mvsType = finishDraft.mvsType; // gym|travel|outdoor
+  if(finishDraft.finisher) rec.finisher = finishDraft.finisher; // {mode, min} — strength only
   if(finishDraft.manual) rec.manual = true;
 
   const editIdx = (sessionState && sessionState.editingIndex!=null) ? sessionState.editingIndex : null;
@@ -1626,12 +1896,14 @@ function renderManualForEdit(idx){
 function sessionSummary(s){
   if(s.slot==='C'){
     const w=(s.work||[])[0]||{};
-    return `${labelMode(w.mode||'')} · ${s.min||w.min||0} min`;
+    const vest = w.vest ? ` · vest ${w.vest} lb` : '';
+    return `${labelMode(w.mode||'')} · ${s.min||w.min||0} min${vest}`;
   }
   if(s.slot==='REC') return `Recovery · ${s.min||0} min`;
   if(s.slot==='MVS') return `MVS ${s.mvsType||''} · ${s.min||0} min`;
   const n=(s.work||[]).reduce((a,w)=>a+((w.sets||[]).length),0);
-  return `${n} set${n===1?'':'s'} · ${s.min||0} min`;
+  const fin = s.finisher ? ` · finisher ${s.finisher.min} min` : '';
+  return `${n} set${n===1?'':'s'} · ${s.min||0} min${fin}`;
 }
 
 function renderHistory(){
@@ -1676,6 +1948,9 @@ function openSessionDetail(idx){
       const sets = (w.sets||[]).map(x=>`${x[0]}×${x[1]}`).join('  ');
       return `<div class="list-row"><div class="list-title">${def?def.name:w.ex}</div><div class="list-trailing">${sets||'—'}</div></div>`;
     }).join('');
+    if(s.finisher){
+      work += `<div class="list-row"><div class="list-title">Finisher — ${labelMode(s.finisher.mode)}</div><div class="list-trailing">${s.finisher.min} min</div></div>`;
+    }
   } else {
     work = `<div class="list-row"><div class="list-title">${sessionSummary(s)}</div></div>`;
   }
@@ -1737,17 +2012,53 @@ function renderProgress(){
     ? 'since ' + fmtShortDate(progMeta.startDate)
     : 'last 4 weeks';
 
-  const bwSpark = sparkline(daily.slice(-56).map(d=>({x:d.date,y:d.bw})), '--accent');
-  const waistSpark = sparkline(weekly.slice(-8).map(w=>({x:w.weekOf,y:w.waist})), '--accent');
+  /* Weight chart plots the ROLLING 7-DAY AVERAGE, not raw daily weigh-ins —
+     system-design §2 says the average is the only number reviews look at, and
+     the spec bans a daily-weight chart anywhere (daily noise on a months-scale
+     goal manufactures discouragement). Through v1.5.3 this plotted raw dailies. */
+  const avgSeries = daily.map(d=>{
+    const from = addDays(d.date,-6);
+    const win = daily.filter(x=>x.date>=from && x.date<=d.date);
+    const avg = win.reduce((a,x)=>a+x.bw,0)/win.length;
+    return {x:d.date, y: Math.round(avg*10)/10};
+  }).slice(-56);
 
-  // per-lift mini charts
+  const bwNow = avgSeries.length ? avgSeries[avgSeries.length-1].y : null;
+  const bwStart = avgSeries.length ? avgSeries[0].y : null;
+  const bwDelta = (bwNow!=null && bwStart!=null) ? Math.round((bwNow-bwStart)*10)/10 : null;
+  const bwCard = `
+    <div class="card">
+      <div class="flex-between">
+        <div class="card-title" style="font-size:17px;">Body weight</div>
+        <div class="stat-value" style="font-size:26px;">${bwNow!=null?bwNow.toFixed(1):'—'}<span class="unit" style="font-size:13px;"> lb</span></div>
+      </div>
+      <div class="microcopy">7-day average${bwDelta!=null?` · ${fmtDelta(bwDelta)} lb since start`:''}</div>
+      ${avgSeries.length ? sparkline(avgSeries,'--accent','lb') : '<div class="microcopy mt8">No data yet.</div>'}
+    </div>`;
+
+  const waistNow = weekly.length ? weekly[weekly.length-1].waist : null;
+  const waistStart = weekly.length ? weekly[0].waist : null;
+  const waistDelta = (waistNow!=null && waistStart!=null) ? Math.round((waistNow-waistStart)*10)/10 : null;
+  const waistCard = `
+    <div class="card">
+      <div class="flex-between">
+        <div class="card-title" style="font-size:17px;">Waist</div>
+        <div class="stat-value" style="font-size:26px;">${waistNow!=null?waistNow:'—'}<span class="unit" style="font-size:13px;"> in</span></div>
+      </div>
+      <div class="microcopy">weekly, at the navel${waistDelta!=null?` · ${fmtDelta(waistDelta)} in since start`:''}</div>
+      ${weekly.length ? sparkline(weekly.slice(-8).map(w=>({x:w.weekOf,y:w.waist})),'--accent','in') : '<div class="microcopy mt8">No data yet.</div>'}
+    </div>`;
+
+  // Per-lift cards: labeled, with the current number printed. "Dots" alone told
+  // Joel nothing — every chart now says what it plots and where the lift stands.
   const cfg = store.get('config');
+  const lifts = store.get('lifts')||{};
   let liftCharts = '';
   if(cfg && cfg.workouts){
     const allEx = [...(cfg.workouts.A||[]), ...(cfg.workouts.B||[])];
     liftCharts = allEx.map(ex=>{
       const points = [];
-      sessions.forEach(s=>{
+      sessions.slice().sort((a,b)=>a.date<b.date?-1:1).forEach(s=>{
         (s.work||[]).forEach(w=>{
           if(w.ex===ex.id && w.sets && w.sets.length){
             points.push({x:s.date, y:w.sets[0][0]});
@@ -1756,7 +2067,19 @@ function renderProgress(){
       });
       const last8 = points.slice(-8);
       if(!last8.length) return '';
-      return `<div class="card"><div class="card-title" style="font-size:17px;">${ex.name}</div>${sparkline(last8,'--accent')}</div>`;
+      const st = lifts[ex.id]||{};
+      const now = st.lastWeight!=null ? st.lastWeight : last8[last8.length-1].y;
+      const started = last8[0].y;
+      const unit = ex.repHi==null ? 'lb' : 'lb';
+      return `
+        <div class="card">
+          <div class="flex-between">
+            <div class="card-title" style="font-size:17px;">${ex.name}</div>
+            <div class="stat-value" style="font-size:26px;">${now}<span class="unit" style="font-size:13px;"> ${unit}</span></div>
+          </div>
+          <div class="microcopy">top-set weight (${unit}) · last ${last8.length} session${last8.length===1?'':'s'} · started ${started} ${unit}</div>
+          ${sparkline(last8,'--accent',unit)}
+        </div>`;
     }).join('');
   }
 
@@ -1771,38 +2094,43 @@ function renderProgress(){
         <div class="microcopy mt8 center">${recent.length} of ${scheduledCount} scheduled &middot; ${windowLabel}</div>
       </div>
       <button class="pill-btn ghost" onclick="Nav.toHistory()">VIEW &amp; EDIT HISTORY</button>
-      <div class="card">
-        <div class="card-title" style="font-size:17px;">Weight — 7-day avg (8 wk)</div>
-        ${daily.length ? bwSpark : '<div class="microcopy mt8">No data yet.</div>'}
-      </div>
-      <div class="card">
-        <div class="card-title" style="font-size:17px;">Waist</div>
-        ${weekly.length ? waistSpark : '<div class="microcopy mt8">No data yet.</div>'}
-      </div>
+      ${bwCard}
+      ${waistCard}
       ${liftCharts}
     </div>
   `;
 }
-function sparkline(points, colorVar){
+function fmtDelta(d){ return (d>0?'+':'')+d; }
+/* Sparkline v2: connected line + dots, dashed gridlines, y-axis min/max labels
+   and first/last values so the chart carries its own numbers. */
+function sparkline(points, colorVar, unit){
   if(!points.length) return '<div class="microcopy mt8">No data yet.</div>';
-  const w=280, h=80, pad=8;
+  const w=300, h=96, padL=34, padR=10, padT=14, padB=16;
   const ys = points.map(p=>p.y).filter(y=>y!=null);
   if(!ys.length) return '<div class="microcopy mt8">No data yet.</div>';
   const minY = Math.min(...ys), maxY = Math.max(...ys);
   const range = maxY-minY || 1;
-  const stepX = points.length>1 ? (w-2*pad)/(points.length-1) : 0;
+  const plotW = w-padL-padR, plotH = h-padT-padB;
+  const stepX = points.length>1 ? plotW/(points.length-1) : 0;
   const coords = points.map((p,i)=>{
-    const x = pad + i*stepX;
-    const y = h-pad - ((p.y-minY)/range)*(h-2*pad);
-    return [x,y];
+    const x = padL + (points.length>1 ? i*stepX : plotW/2);
+    const y = h-padB - ((p.y-minY)/range)*plotH;
+    return [Math.round(x*10)/10, Math.round(y*10)/10];
   });
-  let dots = coords.map(c=>`<circle cx="${c[0]}" cy="${c[1]}" r="4" fill="var(${colorVar})"/>`).join('');
+  const line = coords.length>1
+    ? `<polyline points="${coords.map(c=>c.join(',')).join(' ')}" fill="none" stroke="var(${colorVar})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` : '';
+  const dots = coords.map(c=>`<circle cx="${c[0]}" cy="${c[1]}" r="3" fill="var(${colorVar})"/>`).join('');
   let gridlines='';
   for(let i=0;i<3;i++){
-    const gy = pad + i*((h-2*pad)/2);
-    gridlines += `<line x1="${pad}" y1="${gy}" x2="${w-pad}" y2="${gy}" stroke="var(--line)" stroke-width="1" stroke-dasharray="3,3"/>`;
+    const gy = padT + i*(plotH/2);
+    gridlines += `<line x1="${padL}" y1="${gy}" x2="${w-padR}" y2="${gy}" stroke="var(--line)" stroke-width="1" stroke-dasharray="3,3"/>`;
   }
-  return `<div class="chart-wrap"><svg class="chart" viewBox="0 0 ${w} ${h}">${gridlines}${dots}</svg></div>`;
+  const yLabels = `
+    <text x="${padL-5}" y="${padT+4}" class="chart-label" text-anchor="end">${maxY}</text>
+    <text x="${padL-5}" y="${h-padB+4}" class="chart-label" text-anchor="end">${minY}</text>`;
+  const lastPt = coords[coords.length-1];
+  const lastLabel = `<text x="${Math.min(lastPt[0], w-padR-2)}" y="${Math.max(padT-3, lastPt[1]-7)}" class="chart-label" text-anchor="end" style="font-weight:700; fill:var(--text);">${points[points.length-1].y}</text>`;
+  return `<div class="chart-wrap"><svg class="chart" viewBox="0 0 ${w} ${h}">${gridlines}${line}${dots}${yLabels}${coords.length>1?lastLabel:''}</svg></div>`;
 }
 
 /* ================= SETTINGS ================= */
@@ -1943,6 +2271,18 @@ function afterRender(name, params){
 
 /* ================= boot ================= */
 ensureInit();
+/* Version migration: on any app update, refresh meta.appVersion (it sat stale
+   at 1.3.0 through two review cycles) and rebuild the lifts cache so shape
+   changes (v1.6.0 added lastWeight/lastReps/advanced) land without waiting for
+   the next save. recomputeLifts is cheap and idempotent. */
+(function versionMigrate(){
+  const meta = store.get('meta');
+  if(meta && meta.appVersion !== APP_VERSION){
+    meta.appVersion = APP_VERSION;
+    store.set('meta', meta);
+    recomputeLifts();
+  }
+})();
 Nav.home();
 // An unfinished session from a previous day gets offered, never silently dropped.
 checkStaleActive();
