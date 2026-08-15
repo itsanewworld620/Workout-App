@@ -154,6 +154,10 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
     <svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
     <span class="tab-label">Home</span>
   </button>
+  <button class="tab" data-tab="workouts" onclick="Nav.tab('workouts')">
+    <svg viewBox="0 0 24 24"><path d="M4 9v6M7 8v8M17 8v8M20 9v6M7 12h10"/></svg>
+    <span class="tab-label">Workouts</span>
+  </button>
   <button class="tab" data-tab="progress" onclick="Nav.tab('progress')">
     <svg viewBox="0 0 24 24"><path d="M4 19V9"/><path d="M11 19V5"/><path d="M18 19v-7"/></svg>
     <span class="tab-label">Progress</span>
@@ -166,7 +170,7 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
 
 <script>
 'use strict';
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '2.0.0';
 
 /* ---------- wall-clock timers ----------
    All in-session timers derive their value from Date.now() timestamps, never
@@ -234,7 +238,25 @@ function ensureInit(){
   if(!store.get('daily')) store.set('daily', []);
   if(!store.get('weekly')) store.set('weekly', []);
   if(!store.get('config')) store.set('config', null);
+  if(!store.get('notes')) store.set('notes', []);        // v2.0: general notes
   if(localStorage.getItem('wos.active')===null) store.set('active', null);
+}
+
+/* v2.0 additive migration: adds the new schema keys/fields without touching any
+   existing data. `notes[]` is ensured in ensureInit; here we backfill the new
+   config fields (`url` per exercise, `emom` block) on an already-imported config.
+   Only adds absent keys — never rewrites values. */
+function migrateV20(){
+  const cfg = store.get('config');
+  if(!cfg) return;
+  let changed = false;
+  if(cfg.workouts){
+    for(const k in cfg.workouts){
+      (cfg.workouts[k]||[]).forEach(e=>{ if(!('url' in e)){ e.url = null; changed = true; } });
+    }
+  }
+  if(!('emom' in cfg)){ cfg.emom = null; changed = true; }   // filled by wos-program import
+  if(changed) store.set('config', cfg);
 }
 
 /* ---------- replay engine ----------
@@ -340,6 +362,9 @@ function persistActive(screen){
     exercises: sessionState.exercises ? sessionState.exercises.map(r=>({ex:r.ex, weight:r.weight, sets:r.sets, prefillReps:r.prefillReps||null, prefillWeights:r.prefillWeights||null})) : null,
     mvsItems: sessionState.mvsItems || null,
     recChecks: sessionState.recChecks || null,
+    warmChecks: sessionState.warmChecks || null,
+    steps: sessionState.steps || null,
+    emom: sessionState.emom || null,
     mode: sessionState.mode || null,
     min: sessionState.min!=null ? sessionState.min : null,
     vest: sessionState.vest!=null ? sessionState.vest : null,
@@ -537,6 +562,7 @@ function confirmSheet(title, body, okLabel, cancelLabel, onOk, onCancel){
 /* ---------- render root ---------- */
 const Nav = {
   tab(name){
+    if(name!=='home' && name!=='workouts') pendingQuick=null;  // a quick-start shortcut is abandoned if you browse elsewhere
     document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
     document.getElementById('tabbar').classList.remove('hidden');
     Screens.render(name);
@@ -567,7 +593,10 @@ const Nav = {
   }
 };
 
+let lastRender = {name:'home', params:null};
 const Screens = { render(name,params){
+  if(typeof emomInterval!=='undefined' && emomInterval){ clearInterval(emomInterval); emomInterval=null; }
+  lastRender = {name, params};
   const app=document.getElementById('app');
   app.innerHTML='';
   if(name==='home') app.innerHTML = renderHome();
@@ -577,13 +606,19 @@ const Screens = { render(name,params){
   else if(name==='settings') app.innerHTML = renderSettings();
   else if(name==='manual') app.innerHTML = renderManual(params);
   else if(name==='history') app.innerHTML = renderHistory();
+  else if(name==='workouts') app.innerHTML = renderWorkouts();
+  else if(name==='workoutDetail') app.innerHTML = renderWorkoutDetail(params);
+  else if(name==='notes') app.innerHTML = renderNotes();
   afterRender(name, params);
 }};
+// Re-render the current non-session screen (used after a link edit etc.)
+function rerenderTab(){ if(['session','finish','manual'].indexOf(lastRender.name)>=0) return; Screens.render(lastRender.name, lastRender.params); }
 
 /* ================= HOME ================= */
 let readinessAns = {sleep:null, sore:null, energy:null};
 let weeklyFields = {waist:'', steps:''};
 let mvsMode = false; // set by the "No gym today" link on a strength day
+let pendingQuick = null; // {kind:'CARDIO'} or {kind:'EMOM',emomId} — a "Log a walk" / library-Start shortcut; still runs through readiness
 
 function renderHome(){
   ensureInit();
@@ -601,13 +636,9 @@ function renderHome(){
   const wk = weekSessionsCount();
   const avg = sevenDayAvgBW();
 
+  // Backup reminder banner removed at Joel's request (2026-08-15). Backup still
+  // lives in Settings; the review feed depends on it, so this only drops the nudge.
   let backupBanner = '';
-  if(meta.lastBackup){
-    const days = daysBetween(meta.lastBackup, today);
-    if(days>7) backupBanner = `<div class="banner" onclick="Nav.tab('settings')">Back up your data — Settings</div>`;
-  } else if(daysBetween(meta.startDate, today) > 7){
-    backupBanner = `<div class="banner" onclick="Nav.tab('settings')">Back up your data — Settings</div>`;
-  }
 
   // An unfinished session owns the screen: resume is the only sensible action,
   // and re-answering readiness on top of a live session would be nonsense.
@@ -643,7 +674,9 @@ function renderHome(){
   } else {
     const slot = scheduleForDate(today);
     const isStrength = slot==='S';
-    const label = isStrength ? `Strength ${nextStrengthLetter()}` : 'Cardio';
+    const cfgE = store.get('config');
+    const isEmom = slot==='K' && cfgE && cfgE.emom && cfgE.emom.workouts && cfgE.emom.workouts.length;
+    const label = isStrength ? `Strength ${nextStrengthLetter()}` : (isEmom ? 'Kettlebell EMOM' : 'Cardio');
     const noGymLink = isStrength
       ? `<div><a class="nogym-link" id="nogym-link" onclick="toggleNoGym(this)">No gym today</a></div>`
       : '';
@@ -702,13 +735,17 @@ function renderHome(){
         <div class="stat-block"><div class="stat-label">Date</div><div class="stat-value" style="font-size:17px;">${fmtDateHeader(today).split(',')[0]}</div></div>
       </div>
       ${todayCardHtml}
+      ${pendingQuick ? `<div class="banner">Quick start: ${pendingQuick.kind==='EMOM'?'Kettlebell EMOM':'Walk'} — answer readiness, then Start. <span style="text-decoration:underline;cursor:pointer;" onclick="pendingQuick=null;Nav.home();">cancel</span></div>` : ''}
       ${bwSection}
       ${weeklyExtra}
       ${readinessSection}
+      ${(isSat||!cfg) ? '' : `<button class="pill-btn ghost mt12" onclick="quickWalk()">Log a walk</button>`}
       ${pastLink}
     </div>
   `;
 }
+function quickWalk(){ pendingQuick = {kind:'CARDIO'}; Nav.home(); }
+function quickEmom(emomId){ pendingQuick = {kind:'EMOM', emomId}; Nav.home(); }
 
 function activeSummary(a){
   const v = a.variant || {};
@@ -752,7 +789,7 @@ function restoreSessionState(a){
     finisherMin: (a.finisherMin!=null ? a.finisherMin : null),
     frozen: !!a.frozen,
     exercises: a.exercises||null, mvsItems: a.mvsItems||null,
-    recChecks: a.recChecks||null, date: a.date, manual: !!a.manual,
+    recChecks: a.recChecks||null, warmChecks: a.warmChecks||null, steps: a.steps||null, emom: a.emom||null, date: a.date, manual: !!a.manual,
     editingIndex: (a.editingIndex!=null ? a.editingIndex : null),
     finishDraft: a.finishDraft||null, screen: a.screen||'session'
   };
@@ -883,7 +920,7 @@ function startSession(){
 
   // No-gym mode routes to the MVS picker — but a RED reading still owns the
   // session (hard rule §4: RED = recovery, never a strength circuit).
-  if(mvsMode && r.state!=='RED'){
+  if(mvsMode && !pendingQuick && r.state!=='RED'){
     window._weeklyFieldsPending = weeklyFields;
     saveWeeklyIfSunday();
     saveBWIfEntered();
@@ -891,13 +928,23 @@ function startSession(){
     return;
   }
 
+  // A "Log a walk" / library-Start shortcut overrides the scheduled slot — but
+  // readiness still gates it (RED always routes to recovery, hard rule §4).
+  const quick = pendingQuick; pendingQuick = null;
+
   let variant;
   if(r.state==='RED'){
     variant = {kind:'REC', readiness:r};
+  } else if(quick && quick.kind==='CARDIO'){
+    variant = {kind:'CARDIO', degraded: r.state==='YELLOW', readiness:r};
+  } else if(quick && quick.kind==='EMOM' && cfg && cfg.emom && cfg.emom.workouts && cfg.emom.workouts.length){
+    variant = {kind:'EMOM', emomId: quick.emomId || nextEmomId(), degraded: r.state==='YELLOW', readiness:r};
   } else if(slotType==='S'){
     const letter = nextStrengthLetter();
     variant = {kind:'STRENGTH', letter, degraded: r.state==='YELLOW', readiness:r};
-  } else if(slotType==='C'){
+  } else if(slotType==='K' && cfg && cfg.emom && cfg.emom.workouts && cfg.emom.workouts.length){
+    variant = {kind:'EMOM', emomId: nextEmomId(), degraded: r.state==='YELLOW', readiness:r};
+  } else if(slotType==='C' || slotType==='K'){
     variant = {kind:'CARDIO', degraded: r.state==='YELLOW', readiness:r};
   } else {
     variant = {kind:'REC', readiness:r};
@@ -966,6 +1013,7 @@ function renderSession(variant, restored){
   else if(variant.kind==='MVS')      html = renderMvsSession(variant);
   else if(variant.kind==='REC')      html = renderRecSession();
   else if(variant.kind==='CARDIO')   html = renderCardioSession(variant);
+  else if(variant.kind==='EMOM')     html = renderEmomSession(variant);
   else                               html = renderStrengthSession(variant);
 
   persistActive('session');
@@ -1064,17 +1112,52 @@ function renderStrengthSession(variant){
           <span class="unit">${ex.repHi==null?'Secs':'Reps'}</span>
         </div>`;
     }
+    const durTimer = (ex.repHi==null && ex.durationSec) ? `
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+          <div id="exdur-${idx}" style="font-size:24px;font-weight:800;min-width:70px;">0:${pad(ex.durationSec)}</div>
+          <button class="pill-btn accent small" style="width:auto;padding:8px 14px;margin:0;" onclick="exDurStart(${idx},${ex.durationSec})">START</button>
+          <button class="pill-btn ghost small" style="width:auto;padding:8px 14px;margin:0;" onclick="exDurReset(${idx},${ex.durationSec})">RESET</button>
+        </div>` : '';
     return `
       <div class="card ex-card">
         <div class="card-header">
-          <div class="card-title" style="cursor:pointer;" onclick="openLiftHistory('${ex.id}')">${ex.name} <span class="chevron">›</span></div>
+          <div class="card-title" style="cursor:pointer;flex:1;min-width:0;" onclick="openLiftHistory('${ex.id}')">${ex.name}</div>
+          <button style="${exBtnStyle()}" onclick="openLiftHistory('${ex.id}')" title="History"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
+          ${exLinkBtns(ex.id)}
         </div>
         <div class="ex-cue">${ex.cue||''}</div>
         <div class="ex-target">${numSets} × ${repRange} @ ${weight} lb</div>
+        ${durTimer}
         ${setsHtml}
       </div>`;
   }).join('');
 
+  // v2.0: warmup rendered and tracked as the first block of the session, and
+  // per-session step capture (start at top, end just above Finish).
+  const warmList = (cfg && cfg.warmup) || [];
+  if(!sessionState.warmChecks) sessionState.warmChecks = warmList.map(()=>false);
+  if(!sessionState.steps) sessionState.steps = {start:'', end:''};
+  const stepInStyle = 'width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;color:#fff;padding:12px 14px;font-size:16px;font-family:inherit;';
+  const warmHtml = warmList.length ? `
+      <div class="card">
+        <div class="card-header"><div class="card-title" style="font-size:18px;">Warmup</div></div>
+        ${warmList.map((m,i)=>`
+          <div class="warm-row" style="display:flex;align-items:center;padding:10px 0;cursor:pointer;" onclick="toggleWarmCheck(${i}, this)">
+            <span class="tap-circle${sessionState.warmChecks[i]?' logged':''}"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span>
+            <span style="font-weight:600;margin-left:10px;">${m}</span>
+          </div>`).join('')}
+      </div>` : '';
+  const stepsStartHtml = `
+      <div class="card">
+        <div class="card-title" style="font-size:16px;margin-bottom:8px;">Start steps</div>
+        <input inputmode="numeric" placeholder="your step count now" value="${sessionState.steps.start||''}" oninput="setStepField('start', this.value)" style="${stepInStyle}">
+      </div>`;
+  const stepsEndHtml = `
+      <div class="card">
+        <div class="card-title" style="font-size:16px;margin-bottom:8px;">End steps</div>
+        <input inputmode="numeric" placeholder="your step count now" value="${sessionState.steps.end||''}" oninput="setStepField('end', this.value)" style="${stepInStyle}">
+        <div class="microcopy" id="steps-diff" style="margin-top:8px;">${stepsDiffText()}</div>
+      </div>`;
   return `
     <div class="screen active" style="padding-bottom:100px;">
       <div class="flex-between mt8" style="margin-bottom:12px;">
@@ -1083,13 +1166,59 @@ function renderStrengthSession(variant){
       </div>
       ${frozenNote}
       <div id="rest-timer-wrap"></div>
+      ${warmHtml}
+      ${stepsStartHtml}
       ${exHtml}
       ${finisherCard()}
+      ${stepsEndHtml}
     </div>
     <div class="sticky-bar"><div class="sticky-bar-inner">
       <button class="pill-btn accent" onclick="finishStrengthSession()">FINISH SESSION</button>
     </div></div>
   `;
+}
+
+/* v2.0 warmup + steps helpers */
+function toggleWarmCheck(i, rowEl){
+  if(!sessionState || !sessionState.warmChecks) return;
+  sessionState.warmChecks[i] = !sessionState.warmChecks[i];
+  const c = rowEl.querySelector('.tap-circle');
+  if(c) c.classList.toggle('logged', sessionState.warmChecks[i]);
+  persistActive('session');
+}
+function stepsDiffText(){
+  const s = sessionState && sessionState.steps; if(!s) return '';
+  const a = parseInt(s.start,10), b = parseInt(s.end,10);
+  if(!isNaN(a) && !isNaN(b) && b>=a) return (b-a).toLocaleString()+' steps during this workout';
+  return 'Enter start now, end when you finish.';
+}
+function setStepField(which, val){
+  if(!sessionState) return;
+  if(!sessionState.steps) sessionState.steps = {start:'', end:''};
+  sessionState.steps[which] = val;
+  const d = document.getElementById('steps-diff'); if(d) d.textContent = stepsDiffText();
+  persistActive('session');
+}
+/* Shared steps card (cardio + EMOM): start and end in one card. Strength keeps
+   its split layout (start at top, end above Finish). */
+function stepsCard(){
+  if(sessionState && !sessionState.steps) sessionState.steps = {start:'', end:''};
+  const s = (sessionState && sessionState.steps) || {start:'', end:''};
+  const st = 'width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;color:#fff;padding:12px 14px;font-size:16px;font-family:inherit;';
+  return `
+    <div class="card">
+      <div class="card-title" style="font-size:17px;margin-bottom:8px;">Steps</div>
+      <div style="display:flex;gap:9px;">
+        <div style="flex:1;"><div class="microcopy" style="margin-bottom:5px;">Start</div><input inputmode="numeric" value="${s.start||''}" oninput="setStepField('start', this.value)" style="${st}"></div>
+        <div style="flex:1;"><div class="microcopy" style="margin-bottom:5px;">End</div><input inputmode="numeric" value="${s.end||''}" oninput="setStepField('end', this.value)" style="${st}"></div>
+      </div>
+      <div class="microcopy mt8" id="steps-diff">${stepsDiffText()}</div>
+    </div>`;
+}
+function stepsDraft(){
+  if(!sessionState || !sessionState.steps) return null;
+  const a=parseInt(sessionState.steps.start,10), b=parseInt(sessionState.steps.end,10);
+  return (!isNaN(a) && !isNaN(b)) ? {start:a, end:b} : null;
 }
 
 /* Finisher (system-design §1): every strength session ends with 8–12 min of
@@ -1302,6 +1431,13 @@ function finishStrengthSession(){
       startedAt: sessionState.startedAt
     };
     if(fMin>0) draft.finisher = { mode: sessionState.finisherMode||'incline_walk', min: fMin };
+    // v2.0: record warmup completion and per-session steps when present.
+    const wc = sessionState.warmChecks || [];
+    if(wc.length) draft.warm = { done: wc.filter(Boolean).length, total: wc.length };
+    if(sessionState.steps){
+      const sa = parseInt(sessionState.steps.start,10), sb = parseInt(sessionState.steps.end,10);
+      if(!isNaN(sa) && !isNaN(sb)) draft.steps = { start: sa, end: sb };
+    }
     // A manual session has no timer to trust; seed a plausible duration and let
     // the Finish screen's editable field carry the real number.
     if(sessionState.manual){ draft.manual = true; draft.min = 45 + fMin; }
@@ -1350,6 +1486,7 @@ function renderCardioSession(variant){
       </div>
       ${vestCard()}
       ${manualTimeCard()}
+      ${stepsCard()}
     </div>
     <div class="sticky-bar"><div class="sticky-bar-inner">
       <button class="pill-btn accent" onclick="finishCardioSession(${defaultMin})">FINISH SESSION</button>
@@ -1453,6 +1590,7 @@ function finishCardioSession(defaultMin){
     min: minutes,
     startedAt: sessionState.startedAt
   };
+  const cs = stepsDraft(); if(cs) draft.steps = cs;
   if(sessionState.manual) draft.manual = true;
   cardioTimer.reset();
   Nav.toFinish(draft);
@@ -1735,6 +1873,10 @@ function saveSession(elapsedMin){
   };
   if(finishDraft.mvsType) rec.mvsType = finishDraft.mvsType; // gym|travel|outdoor
   if(finishDraft.finisher) rec.finisher = finishDraft.finisher; // {mode, min} — strength only
+  if(finishDraft.emomId) rec.emomId = finishDraft.emomId;       // v2.0 EMOM
+  if(finishDraft.rounds!=null) rec.rounds = finishDraft.rounds; // v2.0 EMOM
+  if(finishDraft.warm) rec.warm = finishDraft.warm;             // v2.0 warmup completion
+  if(finishDraft.steps) rec.steps = finishDraft.steps;          // v2.0 per-session steps
   if(finishDraft.manual) rec.manual = true;
 
   const editIdx = (sessionState && sessionState.editingIndex!=null) ? sessionState.editingIndex : null;
@@ -2139,6 +2281,13 @@ function renderSettings(){
   return `
     <div class="screen active">
       <h1 class="title">Settings</h1>
+      <div class="card" style="cursor:pointer;" onclick="Nav.tab('notes')">
+        <div class="flex-between">
+          <div class="card-title" style="font-size:17px;">Notes</div>
+          <div class="sub">${(store.get('notes')||[]).length} saved ›</div>
+        </div>
+        <div class="microcopy mt8">Jot anything, anytime. Included in your backup so reviews see it.</div>
+      </div>
       <div class="card">
         <div class="card-title" style="font-size:17px;margin-bottom:8px;">Import Program</div>
         <input type="file" id="import-file" accept="application/json" class="mt8">
@@ -2180,6 +2329,9 @@ function importProgram(){
 function applyProgramImport(raw){
   let cfg;
   try{ cfg = JSON.parse(raw); }catch(e){ alertMsg('Invalid JSON.'); return; }
+  // Accept both a raw config and a { "config": {...} } wrapper — wos-program
+  // has produced both shapes; unwrap so either imports cleanly.
+  if(cfg && cfg.config && !cfg.schedule) cfg = cfg.config;
   if(!cfg.schedule || !cfg.workouts){ alertMsg('Config missing schedule/workouts.'); return; }
   if(confirm('Overwrite current program with imported config?')){
     store.set('config', cfg);
@@ -2267,10 +2419,173 @@ function afterRender(name, params){
   if(name==='home'){
     updateStartBtn();
   }
+  if(name==='session' && sessionState && sessionState.emom){
+    emomPaint();
+    const b=document.getElementById('emom-start');
+    if(sessionState.emom.running){ clearInterval(emomInterval); emomInterval=setInterval(emomPaint,250); if(b) b.textContent='PAUSE'; }
+    else if(b){ b.textContent=(sessionState.emom.idx>0||sessionState.emom.remain!=null)?'RESUME':'START'; }
+  }
+}
+
+/* ===================== v2.0 features ===================== */
+function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ---- exercise video links ---- */
+function exBtnStyle(){ return 'background:var(--chip);border:0;border-radius:10px;color:#c9ccd2;width:36px;height:36px;font-size:14px;cursor:pointer;margin-left:6px;vertical-align:middle;flex:0 0 auto;'; }
+function exLinkBtns(key){
+  const k=String(key).replace(/'/g,"\\'");
+  return `<button style="${exBtnStyle()}" onclick="event.stopPropagation();openVideo('${k}')" title="Open video">▶</button>`+
+         `<button style="${exBtnStyle()}" onclick="event.stopPropagation();editVideo('${k}')" title="Edit link">✎</button>`;
+}
+function locateEx(cfg, key){
+  if(!cfg) return null;
+  if(cfg.workouts){ for(const w in cfg.workouts){ const f=(cfg.workouts[w]||[]).find(e=>e.id===key||e.name===key); if(f) return f; } }
+  if(cfg.emom && cfg.emom.workouts){ for(const wk of cfg.emom.workouts){ const f=(wk.ex||[]).find(e=>(e.id||e.name)===key||e.name===key); if(f) return f; } }
+  return null;
+}
+function openVideo(key){ const e=locateEx(store.get('config'),key); const u=e&&e.url; if(u) window.open(u,'_blank'); else editVideo(key); }
+function editVideo(key){
+  const cfg=store.get('config'); const e=locateEx(cfg,key); if(!e) return;
+  const u=prompt('Video link for this exercise:', e.url||'');
+  if(u===null) return;
+  e.url = (u.trim()||null);
+  store.set('config', cfg);
+  rerenderTab();
+}
+
+/* ---- Workouts library ---- */
+function openWorkoutDetail(id){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab==='workouts'));
+  document.getElementById('tabbar').classList.remove('hidden');
+  Screens.render('workoutDetail',{id});
+}
+function workoutRow(id, name, sub){
+  return `<div class="list-row" style="cursor:pointer;" onclick="openWorkoutDetail('${id}')"><div style="flex:1;min-width:0;"><div class="list-title">${escHtml(name)}</div><div class="microcopy">${escHtml(sub)}</div></div><span class="chevron">›</span></div>`;
+}
+function renderWorkouts(){
+  const cfg=store.get('config');
+  if(!cfg) return `<div class="screen active"><h1 class="title">Workouts</h1><div class="card"><div class="sub">No program loaded. Import one from Settings.</div></div></div>`;
+  let rows='';
+  ['A','B'].forEach(L=>{ if(cfg.workouts&&cfg.workouts[L]) rows+=workoutRow(L,'Workout '+L,(cfg.workouts[L]||[]).map(e=>e.name.split(' ')[0]).slice(0,3).join(' · ')); });
+  if(cfg.emom&&cfg.emom.workouts) cfg.emom.workouts.forEach(w=>{ rows+=workoutRow('E:'+w.id, w.name, '6 moves · every-minute'); });
+  if(cfg.mvsGym) rows+=workoutRow('MVS:gym','MVS — Gym','Short fallback circuit');
+  if(cfg.mvsTravel) rows+=workoutRow('MVS:travel','MVS — Travel','No-equipment circuit');
+  rows+=`<div class="list-row" style="cursor:pointer;" onclick="quickWalk()"><div style="flex:1;min-width:0;"><div class="list-title">Cardio — Walk</div><div class="microcopy">Timer + steps</div></div><span class="chevron">›</span></div>`;
+  return `<div class="screen active"><h1 class="title">Workouts</h1><div class="sub">Tap a workout for its exercises, video links, and history.</div><div class="card">${rows}</div></div>`;
+}
+function workoutHistory(id){
+  const sessions=(store.get('sessions')||[]).slice().sort((a,b)=>a.date<b.date?1:-1);
+  const out=[];
+  sessions.forEach(s=>{
+    const st=(s.readiness&&s.readiness.state)||'';
+    if((id==='A'||id==='B') && s.slot===id) out.push({date:s.date,state:st,summary:(s.min||0)+' min'});
+    else if(id.indexOf('E:')===0 && s.slot==='EMOM' && s.emomId===id.slice(2)) out.push({date:s.date,state:st,summary:(s.rounds||'?')+' rounds · '+(s.min||0)+' min'});
+  });
+  return out.slice(0,12);
+}
+function renderWorkoutDetail(params){
+  const cfg=store.get('config'); const id=params.id; let name, exs=[], withLinks=true, isEmom=false;
+  if(id==='A'||id==='B'){ name='Workout '+id; exs=(cfg.workouts[id]||[]).map(e=>({key:e.id,name:e.name,sub:(e.sets||3)+' × '+(e.repHi==null?((e.durationSec||0)+'s'):(e.repLo+'–'+e.repHi))})); }
+  else if(id.indexOf('E:')===0){ isEmom=true; const w=(cfg.emom.workouts||[]).find(x=>x.id===id.slice(2)); name=w?w.name:'EMOM'; exs=(w?w.ex:[]).map(e=>({key:(e.id||e.name),name:e.name,sub:'work the minute'})); }
+  else if(id.indexOf('MVS:')===0){ withLinks=false; const t=id.slice(4); name='MVS — '+(t==='gym'?'Gym':'Travel'); const arr=(t==='gym'?cfg.mvsGym:cfg.mvsTravel)||[]; exs=arr.map(e=>({key:(e.id||e.name),name:e.name,sub:(e.reps?((e.sets||2)+' × '+e.reps):(e.durationSec?(e.durationSec+'s'):(e.trips?(e.trips+' trips'):(e.durationMin?(e.durationMin+' min'):''))))})); }
+  const exHtml=exs.map(e=>`<div class="list-row"><div style="flex:1;min-width:0;"><div class="list-title">${escHtml(e.name)}</div><div class="microcopy">${escHtml(e.sub)}</div></div>${withLinks?exLinkBtns(e.key):''}</div>`).join('');
+  const hist=workoutHistory(id);
+  const histHtml=hist.length?hist.map(h=>`<div class="list-row"><div style="flex:1;"><div class="list-title">${h.date} · ${h.state}</div><div class="microcopy">${escHtml(h.summary)}</div></div></div>`).join(''):`<div class="microcopy">No sessions logged yet.</div>`;
+  const startBtn = isEmom ? `<button class="pill-btn accent mt12" onclick="quickEmom('${id.slice(2)}')">START ${escHtml(name)}</button>` : '';
+  return `<div class="screen active">
+    <button onclick="Nav.tab('workouts')" style="background:none;border:0;color:var(--accent);font-weight:700;font-size:15px;padding:2px 0 10px;cursor:pointer;">‹ Workouts</button>
+    <h1 class="title" style="font-size:26px;">${escHtml(name)}</h1>
+    <div class="card"><div class="card-title" style="font-size:15px;margin-bottom:8px;">Exercises</div>${exHtml}</div>
+    <div class="card"><div class="card-title" style="font-size:15px;margin-bottom:8px;">History</div>${histHtml}</div>
+    ${startBtn}
+  </div>`;
+}
+
+/* ---- Notes ---- */
+function fmtNoteTs(d){ try{ return d.toLocaleDateString(undefined,{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }catch(e){ return todayStr(); } }
+function renderNotes(){
+  const notes=store.get('notes')||[];
+  const list=notes.length?notes.map(n=>`<div class="card" style="position:relative;"><div style="font-weight:600;padding-right:26px;">${escHtml(n.text)}</div><div class="microcopy mt8">${escHtml(n.ts)}</div><button onclick="deleteNote('${n.id}')" style="position:absolute;top:12px;right:12px;background:none;border:0;color:var(--text-3);font-size:16px;cursor:pointer;">✕</button></div>`).join(''):`<div class="microcopy">No notes yet.</div>`;
+  return `<div class="screen active">
+    <button onclick="Nav.tab('settings')" style="background:none;border:0;color:var(--accent);font-weight:700;font-size:15px;padding:2px 0 10px;cursor:pointer;">‹ Settings</button>
+    <h1 class="title">Notes</h1>
+    <div class="card"><textarea class="wos-textarea" id="note-input" placeholder="Add a note…" style="min-height:52px;"></textarea><button class="pill-btn accent small mt12" onclick="addNote()">ADD</button></div>
+    ${list}
+  </div>`;
+}
+function addNote(){ const el=document.getElementById('note-input'); if(!el||!el.value.trim()) return; const notes=store.get('notes')||[]; notes.unshift({id:'n'+Date.now(), ts:fmtNoteTs(new Date()), text:el.value.trim()}); store.set('notes',notes); Screens.render('notes'); }
+function deleteNote(id){ store.set('notes',(store.get('notes')||[]).filter(n=>n.id!==id)); Screens.render('notes'); }
+
+/* ---- per-exercise duration timer (farmer carry etc.) ---- */
+let exTimers={};
+function exDurStart(idx, secs){
+  const cur=exTimers[idx]; const remain=(cur&&cur.remain)||secs*1000;
+  if(cur&&cur.run) return;
+  exTimers[idx]={end:Date.now()+remain, run:true, raf:null};
+  (function loop(){ const t=exTimers[idx]; if(!t||!t.run) return; const el=document.getElementById('exdur-'+idx); if(!el){t.run=false;return;} const left=t.end-Date.now(); if(left<=0){ beep(); el.textContent='0:00'; t.run=false; return; } const s=Math.ceil(left/1000); el.textContent=Math.floor(s/60)+':'+pad(s%60); t.raf=requestAnimationFrame(loop); })();
+}
+function exDurReset(idx, secs){ const t=exTimers[idx]; if(t){ t.run=false; if(t.raf) cancelAnimationFrame(t.raf); } exTimers[idx]=null; const el=document.getElementById('exdur-'+idx); if(el) el.textContent='0:'+pad(secs); }
+
+/* ---- EMOM (Leevi's path — time-based, every minute) ---- */
+let emomInterval=null;
+function emomWorkout(id){ const cfg=store.get('config'); return ((cfg&&cfg.emom&&cfg.emom.workouts)||[]).find(w=>w.id===id)||null; }
+function nextEmomId(){ const cfg=store.get('config'); const ws=(cfg&&cfg.emom&&cfg.emom.workouts)||[]; if(!ws.length) return null; const done=(store.get('sessions')||[]).filter(s=>s.slot==='EMOM').length; return ws[done%ws.length].id; }
+function renderEmomSession(variant){
+  const cfg=store.get('config'); const w=emomWorkout(variant.emomId)||{name:'EMOM',ex:[]};
+  const baseRounds=(cfg&&cfg.emom&&cfg.emom.rounds)||3;
+  if(!sessionState.emom) sessionState.emom={emomId:variant.emomId, rounds: variant.degraded?Math.max(2,baseRounds-1):baseRounds, idx:0, endAt:null, remain:null, running:false};
+  const em=sessionState.emom;
+  const stripe=variant.degraded?`<span class="badge yellow">YELLOW — ${em.rounds} rounds</span>`:`<span class="badge green">GREEN</span>`;
+  return `<div class="screen active" style="padding-bottom:100px;">
+    <div class="flex-between mt8" style="margin-bottom:12px;"><h1 class="title" style="margin-bottom:0;font-size:24px;">${escHtml(w.name)}</h1>${stripe}</div>
+    <div class="card center">
+      <div class="microcopy" id="emom-round">Round 1 of ${em.rounds}</div>
+      <div class="timer-pill" id="emom-clock" style="font-size:58px;">1:00</div>
+      <div style="font-size:22px;font-weight:800;margin-top:8px;" id="emom-now">—</div>
+      <div class="microcopy" id="emom-next">Next · —</div>
+      <div class="microcopy" style="margin-top:6px;">Work the minute — no rep count</div>
+      <button onclick="emomOpenVideo()" style="background:none;border:0;color:var(--accent);font-weight:700;font-size:15px;margin-top:10px;cursor:pointer;">▶ Open video</button>
+    </div>
+    <button class="pill-btn accent" id="emom-start" onclick="emomToggle()">START</button>
+    <button class="pill-btn ghost mt12" onclick="emomReset()">RESET</button>
+    <button class="pill-btn ghost mt12" onclick="emomDrop()">DROP A ROUND</button>
+    ${stepsCard()}
+    <div class="sticky-bar"><div class="sticky-bar-inner"><button class="pill-btn accent" onclick="finishEmomSession()">FINISH</button></div></div>
+  </div>`;
+}
+function emomPaint(){
+  const em=sessionState&&sessionState.emom; if(!em) return;
+  const w=emomWorkout(em.emomId)||{ex:[]}; const per=w.ex.length||6; const total=em.rounds*per;
+  const clock=document.getElementById('emom-clock'); if(!clock) return;
+  let left = em.running&&em.endAt ? em.endAt-Date.now() : (em.remain!=null?em.remain:60000);
+  if(em.running && left<=0){ beep(); em.idx++; if(em.idx>=total){ finishEmomSession(); return; } em.endAt=Date.now()+60000; left=60000; persistActive('session'); }
+  const s=Math.max(0,Math.ceil(left/1000));
+  clock.textContent=Math.floor(s/60)+':'+pad(s%60);
+  const round=Math.floor(em.idx/per)+1; const cur=w.ex[em.idx%per]||{name:'—'}; const nx=(em.idx+1<total)?(w.ex[(em.idx+1)%per]||{name:'—'}).name:'Done';
+  const r=document.getElementById('emom-round'); if(r) r.textContent='Round '+round+' of '+em.rounds;
+  const n=document.getElementById('emom-now'); if(n) n.textContent=cur.name;
+  const nn=document.getElementById('emom-next'); if(nn) nn.textContent='Next · '+nx;
+}
+function emomToggle(){
+  const em=sessionState.emom; const btn=document.getElementById('emom-start');
+  if(!em.running){ em.running=true; em.endAt=Date.now()+(em.remain!=null?em.remain:60000); em.remain=null; clearInterval(emomInterval); emomInterval=setInterval(emomPaint,250); if(btn) btn.textContent='PAUSE'; }
+  else { em.running=false; em.remain=Math.max(0,em.endAt-Date.now()); clearInterval(emomInterval); emomInterval=null; if(btn) btn.textContent='RESUME'; }
+  persistActive('session'); emomPaint();
+}
+function emomReset(){ const em=sessionState.emom; em.idx=0; em.endAt=null; em.remain=null; em.running=false; clearInterval(emomInterval); emomInterval=null; const b=document.getElementById('emom-start'); if(b) b.textContent='START'; persistActive('session'); emomPaint(); }
+function emomDrop(){ const em=sessionState.emom; if(em.rounds>2){ em.rounds--; const w=emomWorkout(em.emomId)||{ex:[]}; if(em.idx>=em.rounds*(w.ex.length||6)){ finishEmomSession(); return; } persistActive('session'); emomPaint(); } }
+function emomOpenVideo(){ const em=sessionState.emom; const w=emomWorkout(em.emomId)||{ex:[]}; const per=w.ex.length||6; const e=w.ex[em.idx%per]; if(e&&e.url) window.open(e.url,'_blank'); }
+function finishEmomSession(){
+  clearInterval(emomInterval); emomInterval=null;
+  const em=sessionState.emom;
+  const draft={ date:sessionState.date||todayStr(), slot:'EMOM', emomId:em.emomId, rounds:em.rounds, readiness:(sessionState.variant&&sessionState.variant.readiness)||null, startedAt:sessionState.startedAt, min:Math.max(1,em.idx) };
+  const es = stepsDraft(); if(es) draft.steps = es;
+  Nav.toFinish(draft);
 }
 
 /* ================= boot ================= */
 ensureInit();
+migrateV20();   // v2.0 additive schema backfill (safe, adds absent keys only)
 /* Version migration: on any app update, refresh meta.appVersion (it sat stale
    at 1.3.0 through two review cycles) and rebuild the lifts cache so shape
    changes (v1.6.0 added lastWeight/lastReps/advanced) land without waiting for

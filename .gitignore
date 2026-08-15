@@ -1,0 +1,12 @@
+# Test tooling — installed locally for the headless suite, never committed
+node_modules/
+package-lock.json
+package.json
+
+# Scratch/debug files from test runs
+_smoke.js
+_dbg.js
+_imp.js
+*.bak
+.fuse_hidden*
+test/.fuse_hidden*

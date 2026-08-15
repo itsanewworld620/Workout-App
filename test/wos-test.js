@@ -17,6 +17,11 @@ function eq(name, a, b) { ok(name, JSON.stringify(a) === JSON.stringify(b), `got
 const consoleErrors = [];
 const netRequests = [];
 
+/* v1.6.0 added a finisher-confirm sheet: finishing a strength session with zero
+   finisher minutes shows a confirm before proceeding to Finish. This helper
+   clicks through it so the suite reaches saveSession, matching real use. */
+function finishStrength(w){ w.finishStrengthSession(); const b = w.document.getElementById('cs-cancel'); if(b) b.click(); }
+
 /* Boot a fresh app instance with a fixed clock and seeded storage. */
 function boot(nowISO, seed) {
   const fixedNow = new Date(nowISO).getTime();
@@ -164,7 +169,7 @@ console.log('\n== 5. Finish + save clears active and replays lifts ==');
   w.startSession();
   // config gives 2 sets in weeks 1-2; hit the top of the range on both
   w.logSet(0, 0, 30, 12); w.logSet(0, 1, 30, 12);
-  w.finishStrengthSession();
+  finishStrength(w);
   w.setRPE(6);
   w.saveSession(47);
   const sessions = storeOf(dom, 'sessions');
@@ -241,7 +246,7 @@ console.log('\n== 9. Manual backfill lands, counts, and is flagged ==');
   w.manualProceed(true);                    // "don't remember"
   ok('manual strength session opened', !!w.document.getElementById('circ-0-0'));
   w.logSet(0, 0, 30, 12); w.logSet(0, 1, 30, 12);
-  w.finishStrengthSession();
+  finishStrength(w);
   ok('finish screen offers editable duration', !!w.document.getElementById('finish-min'));
   ok('manual banner shown', /Marked as a manual entry/.test(txt(dom)));
   w.setRPE(6);
@@ -276,7 +281,7 @@ console.log('\n== 10. Edit a saved session -> replay corrects lift state ==');
   ok('edit opens the session screen', !!w.document.getElementById('circ-0-0'));
   // correct the record: it was really 8 reps, not 12 -> must not advance
   w.logSet(0, 0, 30, 8); w.logSet(0, 1, 30, 8);
-  w.finishStrengthSession();
+  finishStrength(w);
   w.setRPE(6);
   w.saveSession(45);
   const sessions = storeOf(dom, 'sessions');
@@ -604,7 +609,7 @@ console.log('\n== 19. Stale readiness cleared on return to Home (backlog item) =
   w.Nav.home();
   w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
   w.startSession();
-  w.finishStrengthSession();
+  finishStrength(w);
   w.setRPE(6);
   w.saveSession(40);
   eq('readiness answers reset after a session', w.readinessAns, { sleep: null, sore: null, energy: null });
@@ -633,7 +638,7 @@ console.log('\n== 20. Edit pre-fills the record instead of blanking it ==');
      w.document.querySelectorAll('.ex-card')[0].querySelectorAll('.set-row').length, 2);
   // change one rep and save; everything else must survive untouched
   w.logSet(0, 1, 35, 10);
-  w.finishStrengthSession();
+  finishStrength(w);
   w.setRPE(7);
   w.saveSession(45);
   const s = storeOf(dom, 'sessions')[0];
@@ -734,7 +739,7 @@ console.log('\n== 23. Duration is editable on every session, timer or not ==');
   w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
   w.startSession();
   w.logSet(0, 0, 30, 10);
-  w.finishStrengthSession();
+  finishStrength(w);
   const fm = w.document.getElementById('finish-min');
   ok('strength duration editable too', !!fm);
   fm.value = '52';
