@@ -170,7 +170,7 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
 
 <script>
 'use strict';
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 
 /* ---------- wall-clock timers ----------
    All in-session timers derive their value from Date.now() timestamps, never
@@ -370,6 +370,7 @@ function persistActive(screen){
     vest: sessionState.vest!=null ? sessionState.vest : null,
     finisherMode: sessionState.finisherMode || null,
     finisherMin: sessionState.finisherMin!=null ? sessionState.finisherMin : null,
+    finisherVest: sessionState.finisherVest!=null ? sessionState.finisherVest : null,
     frozen: !!sessionState.frozen,
     finishDraft: sessionState.finishDraft || null,
     rpe: (typeof selectedRPE!=='undefined' ? selectedRPE : null),
@@ -674,18 +675,22 @@ function renderHome(){
   } else {
     const slot = scheduleForDate(today);
     const isStrength = slot==='S';
-    const cfgE = store.get('config');
-    const isEmom = slot==='K' && cfgE && cfgE.emom && cfgE.emom.workouts && cfgE.emom.workouts.length;
-    const label = isStrength ? `Strength ${nextStrengthLetter()}` : (isEmom ? 'Kettlebell EMOM' : 'Cardio');
+    // v2.1: the plan's session is the Recommended pick; Joel can choose another.
+    const rec = recommendedPick(today);
+    const isEmomRec = rec && rec.kind==='EMOM';
+    const label = isEmomRec ? 'Kettlebell EMOM' : (rec ? pickLabel(rec) : 'Cardio');
+    const weekLine = isEmomRec ? `This week: ${escHtml(pickLabel(rec))}. ` : '';
     const noGymLink = isStrength
       ? `<div><a class="nogym-link" id="nogym-link" onclick="toggleNoGym(this)">No gym today</a></div>`
       : '';
     todayCardHtml = `
       <div class="card accent-card" id="today-card">
         <div class="card-header">
-          <div class="card-title">${label}</div>
+          <div class="card-title">${escHtml(label)}</div>
+          ${rec ? `<span class="badge neutral">Recommended</span>` : ''}
         </div>
-        <div class="sub">Answer readiness below to start.</div>
+        <div class="sub">${weekLine}Answer readiness below to start.</div>
+        <div><a class="nogym-link" id="pick-link" onclick="openPicker()">Pick a different workout</a></div>
         ${noGymLink}
       </div>`;
   }
@@ -735,7 +740,7 @@ function renderHome(){
         <div class="stat-block"><div class="stat-label">Date</div><div class="stat-value" style="font-size:17px;">${fmtDateHeader(today).split(',')[0]}</div></div>
       </div>
       ${todayCardHtml}
-      ${pendingQuick ? `<div class="banner">Quick start: ${pendingQuick.kind==='EMOM'?'Kettlebell EMOM':'Walk'} — answer readiness, then Start. <span style="text-decoration:underline;cursor:pointer;" onclick="pendingQuick=null;Nav.home();">cancel</span></div>` : ''}
+      ${pendingQuick ? `<div class="banner" id="pick-banner">Today: ${escHtml(pendingQuick.kind==='CARDIO'?'Walk / cardio':pickLabel(pendingQuick))} — answer readiness, then Start. <span style="text-decoration:underline;cursor:pointer;" onclick="pendingQuick=null;Nav.home();">cancel</span></div>` : ''}
       ${bwSection}
       ${weeklyExtra}
       ${readinessSection}
@@ -746,6 +751,91 @@ function renderHome(){
 }
 function quickWalk(){ pendingQuick = {kind:'CARDIO'}; Nav.home(); }
 function quickEmom(emomId){ pendingQuick = {kind:'EMOM', emomId}; Nav.home(); }
+
+/* ---- v2.1: choose today's workout ----
+   The plan's session stays on the Today card as Recommended; Joel can pick any
+   other. A pick only sets pendingQuick — readiness still runs next and still
+   owns the outcome (RED → recovery, YELLOW → that type's rule). */
+function hasEmom(cfg){ return !!(cfg && cfg.emom && cfg.emom.workouts && cfg.emom.workouts.length); }
+// What the plan says for a date — the same mapping startSession has always used.
+function recommendedPick(dateStr){
+  const cfg = store.get('config');
+  if(!cfg || !cfg.schedule) return null;
+  const slot = cfg.schedule[dowKey(dateStr)];
+  if(slot==='S') return {kind:'STRENGTH', letter: nextStrengthLetter()};
+  if(slot==='K' && hasEmom(cfg)) return {kind:'EMOM', emomId: weekEmomId(dateStr)};
+  if(slot==='C' || slot==='K') return {kind:'CARDIO'};
+  return null;
+}
+// Works on picks and on session variants alike (same kind/letter/emomId/mvsType fields).
+function samePick(a, b){
+  if(!a || !b || a.kind!==b.kind) return false;
+  if(a.kind==='STRENGTH') return a.letter===b.letter;
+  if(a.kind==='EMOM') return a.emomId===b.emomId;
+  if(a.kind==='MVS') return a.mvsType===b.mvsType;
+  return true;
+}
+function pickLabel(p){
+  if(!p) return '';
+  if(p.kind==='STRENGTH') return 'Strength ' + p.letter;
+  if(p.kind==='EMOM'){ const w = emomWorkout(p.emomId || weekEmomId(todayStr())); return w ? w.name : 'Kettlebell EMOM'; }
+  if(p.kind==='CARDIO') return 'Cardio';
+  if(p.kind==='MVS') return 'No gym — ' + ({gym:'Gym circuit', travel:'Travel / bodyweight', outdoor:'Outdoor walk'}[p.mvsType] || '');
+  return '';
+}
+let pickItems = [];
+function openPicker(){
+  const cfg = store.get('config');
+  if(!cfg) return;
+  const today = todayStr();
+  const rec = recommendedPick(today);
+  const next = nextStrengthLetter();
+  const wk = hasEmom(cfg) ? weekEmomId(today) : null;
+  const items = [];
+  ['A','B'].forEach(L=>{ if(cfg.workouts && cfg.workouts[L]) items.push({pick:{kind:'STRENGTH', letter:L}, group:'Strength', tag: L===next ? 'next up' : ''}); });
+  if(hasEmom(cfg)){
+    const ws = cfg.emom.workouts;
+    ws.filter(w=>w.id===wk).concat(ws.filter(w=>w.id!==wk))
+      .forEach(w=>items.push({pick:{kind:'EMOM', emomId:w.id}, group:'Kettlebell EMOM', tag: w.id===wk ? 'this week' : ''}));
+  }
+  items.push({pick:{kind:'CARDIO'}, group:'Cardio', tag:''});
+  ['gym','travel','outdoor'].forEach(t=>items.push({pick:{kind:'MVS', mvsType:t}, group:'No gym', tag:''}));
+  const ri = items.findIndex(it=>samePick(it.pick, rec));
+  if(ri>=0){ const r = items.splice(ri,1)[0]; r.group = 'Recommended'; items.unshift(r); }
+  pickItems = items;
+  let lastGroup = null;
+  const rows = items.map((it,i)=>{
+    const head = it.group!==lastGroup ? `<div class="microcopy" style="margin:14px 0 4px;text-transform:uppercase;letter-spacing:.5px;">${it.group}</div>` : '';
+    lastGroup = it.group;
+    const chosen = pendingQuick ? samePick(pendingQuick.kind==='EMOM' && !pendingQuick.emomId ? {kind:'EMOM', emomId:wk} : pendingQuick, it.pick) : (i===0 && ri>=0);
+    const tag = it.tag ? `<span class="badge neutral">${it.tag}</span>` : '';
+    return `${head}<div class="list-row pick-row" data-pick="${i}" style="cursor:pointer;" onclick="choosePick(${i})">
+      <div style="flex:1;min-width:0;"><div class="list-title">${escHtml(pickLabel(it.pick))}</div></div>${tag}${chosen?'<span style="color:var(--accent);font-weight:800;margin-left:8px;">✓</span>':''}</div>`;
+  }).join('');
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.id = 'pick-sheet';
+  backdrop.innerHTML = `
+    <div class="modal-sheet" style="max-height:85vh;overflow-y:auto;">
+      <div class="card-title" style="font-size:20px;">Pick today's workout</div>
+      <div class="microcopy mt8">Readiness still comes first. RED is always recovery.</div>
+      ${rows}
+      <button class="pill-btn ghost mt16" id="pick-close">CLOSE</button>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const close = ()=>{ if(backdrop.parentNode) document.body.removeChild(backdrop); };
+  backdrop.querySelector('#pick-close').onclick = close;
+  backdrop.addEventListener('click', e=>{ if(e.target===backdrop) close(); });
+}
+function choosePick(i){
+  const it = pickItems[i];
+  const sheet = document.getElementById('pick-sheet');
+  if(sheet && sheet.parentNode) sheet.parentNode.removeChild(sheet);
+  if(!it) return;
+  // Picking the Recommended one is just the plan — no pending pick needed.
+  pendingQuick = samePick(it.pick, recommendedPick(todayStr())) ? null : Object.assign({}, it.pick);
+  Nav.home();
+}
 
 function activeSummary(a){
   const v = a.variant || {};
@@ -787,6 +877,7 @@ function restoreSessionState(a){
     vest: (a.vest!=null ? a.vest : null),
     finisherMode: a.finisherMode||null,
     finisherMin: (a.finisherMin!=null ? a.finisherMin : null),
+    finisherVest: (a.finisherVest!=null ? a.finisherVest : null),
     frozen: !!a.frozen,
     exercises: a.exercises||null, mvsItems: a.mvsItems||null,
     recChecks: a.recChecks||null, warmChecks: a.warmChecks||null, steps: a.steps||null, emom: a.emom||null, date: a.date, manual: !!a.manual,
@@ -838,7 +929,10 @@ function buildDraftFromActive(a){
       sets: (row.sets||[]).filter(Boolean).map(s=>[s.weight,s.reps])
     }));
     const fm = a.finisherMin!=null ? a.finisherMin : 0;
-    if(fm>0) base.finisher = { mode: a.finisherMode||'incline_walk', min: fm };
+    if(fm>0){
+      base.finisher = { mode: a.finisherMode||'incline_walk', min: fm };
+      if(base.finisher.mode==='incline_walk' && a.finisherVest>0) base.finisher.vest = a.finisherVest;
+    }
   } else if(v.kind==='CARDIO'){
     base.slot = 'C';
     const cw = {mode: a.mode||'incline_walk', min: cardioTimer.minutes()||20};
@@ -920,35 +1014,45 @@ function startSession(){
 
   // No-gym mode routes to the MVS picker — but a RED reading still owns the
   // session (hard rule §4: RED = recovery, never a strength circuit).
+  // v2.1: anything other than the Recommended session is flagged offPlan.
+  const rec = recommendedPick(today);
+
   if(mvsMode && !pendingQuick && r.state!=='RED'){
     window._weeklyFieldsPending = weeklyFields;
     saveWeeklyIfSunday();
     saveBWIfEntered();
-    Nav.toSession({kind:'MVS_PICK', readiness:r});
+    Nav.toSession({kind:'MVS_PICK', readiness:r, offPlan: !!rec});   // MVS is never the Recommended pick
     return;
   }
 
-  // A "Log a walk" / library-Start shortcut overrides the scheduled slot — but
-  // readiness still gates it (RED always routes to recovery, hard rule §4).
+  // A pick (the picker, "Log a walk", a library Start) overrides the scheduled
+  // slot — but readiness still gates it (RED always routes to recovery, hard rule §4).
   const quick = pendingQuick; pendingQuick = null;
+  const degraded = r.state==='YELLOW';
 
-  let variant;
+  let variant = null;
   if(r.state==='RED'){
     variant = {kind:'REC', readiness:r};
-  } else if(quick && quick.kind==='CARDIO'){
-    variant = {kind:'CARDIO', degraded: r.state==='YELLOW', readiness:r};
-  } else if(quick && quick.kind==='EMOM' && cfg && cfg.emom && cfg.emom.workouts && cfg.emom.workouts.length){
-    variant = {kind:'EMOM', emomId: quick.emomId || nextEmomId(), degraded: r.state==='YELLOW', readiness:r};
-  } else if(slotType==='S'){
-    const letter = nextStrengthLetter();
-    variant = {kind:'STRENGTH', letter, degraded: r.state==='YELLOW', readiness:r};
-  } else if(slotType==='K' && cfg && cfg.emom && cfg.emom.workouts && cfg.emom.workouts.length){
-    variant = {kind:'EMOM', emomId: nextEmomId(), degraded: r.state==='YELLOW', readiness:r};
-  } else if(slotType==='C' || slotType==='K'){
-    variant = {kind:'CARDIO', degraded: r.state==='YELLOW', readiness:r};
-  } else {
-    variant = {kind:'REC', readiness:r};
+  } else if(quick){
+    if(quick.kind==='CARDIO') variant = {kind:'CARDIO', degraded, readiness:r};
+    else if(quick.kind==='EMOM' && hasEmom(cfg)) variant = {kind:'EMOM', emomId: quick.emomId || weekEmomId(today), degraded, readiness:r};
+    else if(quick.kind==='STRENGTH') variant = {kind:'STRENGTH', letter: quick.letter, degraded, readiness:r};
+    else if(quick.kind==='MVS') variant = {kind:'MVS', mvsType: quick.mvsType, readiness:r};
   }
+  if(!variant){
+    if(slotType==='S'){
+      const letter = nextStrengthLetter();
+      variant = {kind:'STRENGTH', letter, degraded, readiness:r};
+    } else if(slotType==='K' && hasEmom(cfg)){
+      variant = {kind:'EMOM', emomId: weekEmomId(today), degraded, readiness:r};
+    } else if(slotType==='C' || slotType==='K'){
+      variant = {kind:'CARDIO', degraded, readiness:r};
+    } else {
+      variant = {kind:'REC', readiness:r};
+    }
+  }
+  // RED recovery is the rule, not a choice, so it is never offPlan.
+  if(variant.kind!=='REC' && rec && !samePick(variant, rec)) variant.offPlan = true;
   window._weeklyFieldsPending = weeklyFields;
   saveWeeklyIfSunday();
   saveBWIfEntered();
@@ -1002,6 +1106,8 @@ function renderSession(variant, restored){
                            ? (variant.existing.finisher.mode||null) : null,
                      finisherMin: (variant && variant.existing && variant.existing.finisher && variant.existing.finisher.min!=null)
                            ? variant.existing.finisher.min : null,
+                     finisherVest: (variant && variant.existing && variant.existing.finisher && variant.existing.finisher.vest!=null)
+                           ? variant.existing.finisher.vest : null,
                      note: (variant && variant.existing) ? (variant.existing.note||'') : '',
                      date: (variant && variant.date) || todayStr(),
                      manual: !!(variant && variant.manual),
@@ -1225,13 +1331,22 @@ function stepsDraft(){
    incline walk or carries. Always rendered, on YELLOW too (Joel's call,
    2026-07-31 — it's easy walking, not load). Mode is a picker; last-used wins
    next time. Typed minutes beat the timer, same rule as every timed screen. */
-function finisherCard(){
+/* v2.1: the same card is the EMOM's optional walk block ({emom:true}) — no
+   mode picker, mode is always 'walk'. The vest shows for walking only. */
+function finisherCard(opts){
+  const emom = !!(opts && opts.emom);
   const prefs = store.get('prefs')||{};
-  if(!sessionState.finisherMode) sessionState.finisherMode = prefs.finisherMode || 'incline_walk';
+  if(emom) sessionState.finisherMode = 'walk';
+  else if(!sessionState.finisherMode) sessionState.finisherMode = prefs.finisherMode || 'incline_walk';
   const m = sessionState.finisherMode;
   const v = sessionState.finisherMin!=null ? sessionState.finisherMin : '';
-  return `
-    <div class="card" id="finisher-card">
+  const showVest = emom || m==='incline_walk';
+  const head = emom ? `
+      <div class="card-header">
+        <div class="card-title" style="font-size:17px;">Walk</div>
+        <span class="badge neutral">optional</span>
+      </div>
+      <div class="microcopy" style="margin-bottom:10px;">Easy walk after the EMOM. Leave it at zero to skip.</div>` : `
       <div class="card-header">
         <div class="card-title" style="font-size:17px;">Finisher</div>
         <span class="badge neutral">8–12 min</span>
@@ -1240,7 +1355,10 @@ function finisherCard(){
       <div style="display:flex; gap:8px; margin-bottom:12px;">
         <button class="chip" id="fin-mode-walk" onclick="setFinisherMode('incline_walk')" style="${m==='incline_walk'?'background:var(--accent);color:#fff;':''}">Incline walk</button>
         <button class="chip" id="fin-mode-carry" onclick="setFinisherMode('carry')" style="${m==='carry'?'background:var(--accent);color:#fff;':''}">Carries</button>
-      </div>
+      </div>`;
+  return `
+    <div class="card" id="finisher-card">
+      ${head}
       <div class="center">
         <div class="timer-pill" id="finisher-timer">00:00</div>
         <div class="mt12"><button class="pill-btn accent small" id="finisher-toggle" onclick="toggleFinisherTimer()">START</button></div>
@@ -1249,6 +1367,7 @@ function finisherCard(){
         <input type="number" inputmode="numeric" id="finisher-min" class="bw-input" placeholder="min" value="${v}" oninput="setFinisherMin(this.value)">
         <span class="bw-avg">or type the minutes</span>
       </div>
+      <div id="fin-vest" class="mt16" style="display:${showVest?'block':'none'};">${vestFields('finisherVest')}</div>
     </div>`;
 }
 function setFinisherMode(m){
@@ -1260,6 +1379,8 @@ function setFinisherMode(m){
   const w = document.getElementById('fin-mode-walk'), c = document.getElementById('fin-mode-carry');
   if(w) w.style.cssText = m==='incline_walk' ? 'background:var(--accent);color:#fff;' : '';
   if(c) c.style.cssText = m==='carry' ? 'background:var(--accent);color:#fff;' : '';
+  const fv = document.getElementById('fin-vest');
+  if(fv) fv.style.display = m==='incline_walk' ? 'block' : 'none';
   persistActive('session');
 }
 function toggleFinisherTimer(){ finisherTimer.toggle(); persistActive('session'); }
@@ -1336,6 +1457,8 @@ function editSet(exIdx, setIdx, field){
     const r = parseFloat(document.getElementById(`rchip-${exIdx}-${setIdx}`).textContent)||0;
     row.sets[setIdx] = {weight:w, reps:r};
     persistActive('session');
+    // v2.1 (session note 8/17): weight is always followed by reps — go straight on.
+    if(field==='weight') editSet(exIdx, setIdx, 'reps');
   }, {label, decimal: field==='weight'});
 }
 
@@ -1366,6 +1489,8 @@ function openNumpad(startVal, onSave, opts){
     if(!isNaN(v) && v>=0) onSave(v);
   };
   backdrop.querySelector('#numpad-cancel').onclick = close;
+  // Tapping outside the sheet is a Cancel, never a Save (v2.1).
+  backdrop.addEventListener('click', e=>{ if(e.target===backdrop) close(); });
   inp.addEventListener('keydown', e=>{ if(e.key==='Enter') backdrop.querySelector('#numpad-save').click(); });
 }
 
@@ -1401,13 +1526,13 @@ function renderRestTimer(){
   const cls = remaining<=5 ? 'timer-pill final' : 'timer-pill';
   wrap.innerHTML = `<div class="card center"><div class="rest-label">Rest</div><div class="${cls}">${m}:${pad(s)}</div></div>`;
 }
-function beep(){
+function beep(ms, freq){
   try{
     const ctx = new (window.AudioContext||window.webkitAudioContext)();
     const o = ctx.createOscillator(); const g = ctx.createGain();
     o.connect(g); g.connect(ctx.destination);
-    o.frequency.value = 880; g.gain.value = 0.2;
-    o.start(); setTimeout(()=>{o.stop(); ctx.close();},300);
+    o.frequency.value = freq||880; g.gain.value = 0.2;
+    o.start(); setTimeout(()=>{o.stop(); ctx.close();}, ms||300);
   }catch(e){}
 }
 
@@ -1430,7 +1555,12 @@ function finishStrengthSession(){
       work,
       startedAt: sessionState.startedAt
     };
-    if(fMin>0) draft.finisher = { mode: sessionState.finisherMode||'incline_walk', min: fMin };
+    if(fMin>0){
+      draft.finisher = { mode: sessionState.finisherMode||'incline_walk', min: fMin };
+      // v2.1: vest only counts on a walk
+      const fv = draft.finisher.mode==='incline_walk' ? finisherVestLb() : null;
+      if(fv) draft.finisher.vest = fv;
+    }
     // v2.0: record warmup completion and per-session steps when present.
     const wc = sessionState.warmChecks || [];
     if(wc.length) draft.warm = { done: wc.filter(Boolean).length, total: wc.length };
@@ -1441,7 +1571,7 @@ function finishStrengthSession(){
     // A manual session has no timer to trust; seed a plausible duration and let
     // the Finish screen's editable field carry the real number.
     if(sessionState.manual){ draft.manual = true; draft.min = 45 + fMin; }
-    finisherTimer.reset();
+    // Timer kept (stopped, not reset) so Finish → Back restores it; a fresh session resets it (v2.1).
     Nav.toFinish(draft);
   };
   // The finisher is part of every strength session (§1) and Joel made it
@@ -1532,33 +1662,47 @@ function resolveMinutes(timer, fallback){
 /* Weighted vest (v1.6.0, Joel's request). Field starts blank so a vest-less
    walk never silently logs one; the saved default is one tap away. Typing a
    weight makes it the new default. Blank = no vest. */
-function vestCard(){
+/* `key` is the sessionState field the vest writes to: `vest` for cardio,
+   `finisherVest` for the strength finisher / EMOM walk (v2.1). Never both on
+   one screen, so the element ids can stay shared. */
+function vestFields(key){
+  key = key||'vest';
   const prefs = store.get('prefs')||{};
-  const v = sessionState && sessionState.vest!=null ? sessionState.vest : '';
+  const v = sessionState && sessionState[key]!=null ? sessionState[key] : '';
   const chip = (prefs.vestLb && v==='')
-    ? `<button class="chip" id="vest-chip" onclick="applyVestDefault()">Vest ${prefs.vestLb} lb</button>` : '';
+    ? `<button class="chip" id="vest-chip" onclick="applyVestDefault('${key}')">Vest ${prefs.vestLb} lb</button>` : '';
   return `
-    <div class="card">
       <div class="card-title" style="font-size:17px;margin-bottom:8px;">Weighted vest</div>
       <div class="bw-row">
         <input type="number" inputmode="decimal" id="vest-lb" class="bw-input" placeholder="none"
-               value="${v}" oninput="setVest(this.value)">
+               value="${v}" oninput="setVest(this.value,'${key}')">
         <span class="bw-avg">lb</span>
         ${chip}
       </div>
-      <div class="microcopy mt8">Blank = no vest. A typed weight becomes your default.</div>
-    </div>`;
+      <div class="microcopy mt8">Blank = no vest. A typed weight becomes your default.</div>`;
 }
-function setVest(v){
+function vestCard(key){ return `<div class="card">${vestFields(key)}</div>`; }
+function setVest(v, key){
   if(!sessionState) return;
   const n = parseFloat(v);
-  sessionState.vest = (v==='' || isNaN(n)) ? null : n;
+  sessionState[key||'vest'] = (v==='' || isNaN(n)) ? null : n;
   persistActive('session');
 }
-function applyVestDefault(){
+/* Vest worn on the finisher walk, or null. A worn weight becomes the default,
+   same as cardio. */
+function finisherVestLb(){
+  const v = sessionState && sessionState.finisherVest;
+  if(v==null || !(v>0)) return null;
+  const prefs = store.get('prefs')||{};
+  prefs.vestLb = v;
+  store.set('prefs', prefs);
+  return v;
+}
+function applyVestDefault(key){
+  key = key||'vest';
   const prefs = store.get('prefs')||{};
   if(!prefs.vestLb || !sessionState) return;
-  sessionState.vest = prefs.vestLb;
+  sessionState[key] = prefs.vestLb;
   const el = document.getElementById('vest-lb');
   if(el) el.value = prefs.vestLb;
   const chip = document.getElementById('vest-chip');
@@ -1592,7 +1736,7 @@ function finishCardioSession(defaultMin){
   };
   const cs = stepsDraft(); if(cs) draft.steps = cs;
   if(sessionState.manual) draft.manual = true;
-  cardioTimer.reset();
+  // Timer kept (stopped, not reset) so Finish → Back restores it; a fresh session resets it (v2.1).
   Nav.toFinish(draft);
 }
 
@@ -1649,7 +1793,7 @@ function finishRecSession(){
     startedAt: sessionState.startedAt
   };
   if(sessionState.manual) draft.manual = true;
-  recTimer.reset();
+  // Timer kept (stopped, not reset) so Finish → Back restores it; a fresh session resets it (v2.1).
   Nav.toFinish(draft);
 }
 
@@ -1677,8 +1821,11 @@ function pickMvs(type){
   const d = sessionState ? sessionState.date : todayStr();
   const man = sessionState ? !!sessionState.manual : false;
   const ei = sessionState && sessionState.editingIndex!=null ? sessionState.editingIndex : null;
+  const off = !!(sessionState && sessionState.variant && sessionState.variant.offPlan);   // v2.1
   sessionState = null;   // drop the picker's state so the real session builds fresh
-  Nav.toSession({kind:'MVS', mvsType:type, readiness:r, date:d, manual:man, editingIndex:ei});
+  const v = {kind:'MVS', mvsType:type, readiness:r, date:d, manual:man, editingIndex:ei};
+  if(off) v.offPlan = true;
+  Nav.toSession(v);
 }
 
 function renderMvsSession(variant){
@@ -1793,7 +1940,7 @@ function finishMvsOutdoor(){
     startedAt: sessionState.startedAt
   };
   if(sessionState.manual) draft.manual = true;
-  outdoorTimer.reset();
+  // Timer kept (stopped, not reset) so Finish → Back restores it; a fresh session resets it (v2.1).
   Nav.toFinish(draft);
 }
 
@@ -1826,6 +1973,7 @@ function renderFinish(draft){
   return `
     <div class="screen active">
       ${banner}
+      <button id="finish-back" onclick="backToSession()" style="background:none;border:0;color:var(--accent);font-weight:700;font-size:15px;padding:2px 0 10px;cursor:pointer;">‹ Back to session</button>
       <h1 class="title">Finish</h1>
       <div class="card">
         <div class="card-title" style="font-size:17px;">Session RPE</div>
@@ -1842,6 +1990,22 @@ function renderFinish(draft){
       <button class="pill-btn accent" id="save-btn" onclick="saveSession(${elapsedMin})">SAVE</button>
     </div></div>
   `;
+}
+/* v2.1: Finish → Back, before anything is saved. Goes through the same path as
+   Resume, so every tap, typed value and paused timer comes back exactly. */
+function backToSession(){
+  const a = store.get('active');
+  if(!a){ Nav.home(); return; }
+  a.screen = 'session'; a.finishDraft = null;
+  store.set('active', a);
+  finishDraft = null;
+  Nav.toSession(a.variant, a);
+  // After the screen exists, so the paused clock shows its time and RESUME.
+  cardioTimer.restore(a.timers && a.timers.cardio);
+  recTimer.restore(a.timers && a.timers.rec);
+  outdoorTimer.restore(a.timers && a.timers.outdoor);
+  finisherTimer.restore(a.timers && a.timers.finisher);
+  persistActive('session');
 }
 let selectedRPE = null;
 function setRPE(v){
@@ -1872,7 +2036,7 @@ function saveSession(elapsedMin){
     note
   };
   if(finishDraft.mvsType) rec.mvsType = finishDraft.mvsType; // gym|travel|outdoor
-  if(finishDraft.finisher) rec.finisher = finishDraft.finisher; // {mode, min} — strength only
+  if(finishDraft.finisher) rec.finisher = finishDraft.finisher; // {mode, min, vest?} — strength, or EMOM walk (v2.1)
   if(finishDraft.emomId) rec.emomId = finishDraft.emomId;       // v2.0 EMOM
   if(finishDraft.rounds!=null) rec.rounds = finishDraft.rounds; // v2.0 EMOM
   if(finishDraft.warm) rec.warm = finishDraft.warm;             // v2.0 warmup completion
@@ -1880,6 +2044,11 @@ function saveSession(elapsedMin){
   if(finishDraft.manual) rec.manual = true;
 
   const editIdx = (sessionState && sessionState.editingIndex!=null) ? sessionState.editingIndex : null;
+  // v2.1: picked something other than the Recommended session. An edit keeps
+  // whatever the record already said.
+  const pickedOff = !!(sessionState && sessionState.variant && sessionState.variant.offPlan);
+  const wasOff = editIdx!=null && sessions[editIdx] && sessions[editIdx].offPlan;
+  if(pickedOff || wasOff) rec.offPlan = true;
   if(editIdx!=null && sessions[editIdx]){
     rec.manual = true;              // an edited record is no longer a pure live log
     sessions[editIdx] = rec;
@@ -2467,11 +2636,11 @@ function renderWorkouts(){
   if(!cfg) return `<div class="screen active"><h1 class="title">Workouts</h1><div class="card"><div class="sub">No program loaded. Import one from Settings.</div></div></div>`;
   let rows='';
   ['A','B'].forEach(L=>{ if(cfg.workouts&&cfg.workouts[L]) rows+=workoutRow(L,'Workout '+L,(cfg.workouts[L]||[]).map(e=>e.name.split(' ')[0]).slice(0,3).join(' · ')); });
-  if(cfg.emom&&cfg.emom.workouts) cfg.emom.workouts.forEach(w=>{ rows+=workoutRow('E:'+w.id, w.name, '6 moves · every-minute'); });
+  if(cfg.emom&&cfg.emom.workouts){ const wk=weekEmomId(todayStr()); cfg.emom.workouts.forEach(w=>{ rows+=workoutRow('E:'+w.id, w.name, (w.id===wk?'This week · ':'')+'6 moves · every-minute'); }); }
   if(cfg.mvsGym) rows+=workoutRow('MVS:gym','MVS — Gym','Short fallback circuit');
   if(cfg.mvsTravel) rows+=workoutRow('MVS:travel','MVS — Travel','No-equipment circuit');
   rows+=`<div class="list-row" style="cursor:pointer;" onclick="quickWalk()"><div style="flex:1;min-width:0;"><div class="list-title">Cardio — Walk</div><div class="microcopy">Timer + steps</div></div><span class="chevron">›</span></div>`;
-  return `<div class="screen active"><h1 class="title">Workouts</h1><div class="sub">Tap a workout for its exercises, video links, and history.</div><div class="card">${rows}</div></div>`;
+  return `<div class="screen active"><h1 class="title">Workouts</h1><div class="sub">Tap a workout for its exercises, video links, and history.</div>${(cfg.emom&&cfg.emom.workouts&&emomWorkout(weekEmomId(todayStr())))?`<div class="microcopy mt8">This week: ${escHtml(emomWorkout(weekEmomId(todayStr())).name)}</div>`:""}<div class="card">${rows}</div></div>`;
 }
 function workoutHistory(id){
   const sessions=(store.get('sessions')||[]).slice().sort((a,b)=>a.date<b.date?1:-1);
@@ -2528,12 +2697,37 @@ function exDurReset(idx, secs){ const t=exTimers[idx]; if(t){ t.run=false; if(t.
 
 /* ---- EMOM (Leevi's path — time-based, every minute) ---- */
 let emomInterval=null;
+let emomLastPaint=null;   // wall-clock time of the previous repaint; a big gap means the phone just woke
+let emomLastCue=null;     // "idx:sec" of the last countdown beep, so each fires once
 function emomWorkout(id){ const cfg=store.get('config'); return ((cfg&&cfg.emom&&cfg.emom.workouts)||[]).find(w=>w.id===id)||null; }
-function nextEmomId(){ const cfg=store.get('config'); const ws=(cfg&&cfg.emom&&cfg.emom.workouts)||[]; if(!ws.length) return null; const done=(store.get('sessions')||[]).filter(s=>s.slot==='EMOM').length; return ws[done%ws.length].id; }
+/* EMOM of the week (v2.1). The week runs Monday–Sunday. The first EMOM logged
+   in a week sets it for that week — whether the app or Joel picked it — and any
+   later different EMOM that week is a one-off that changes nothing. With none
+   logged yet this week: the one after the most recent earlier week's FIRST
+   EMOM, so a missed week never skips a workout. Replaces the per-session
+   rotation (Joel, 2026-09-30). */
+function weekStartOf(dateStr){ const d=new Date(dateStr+'T12:00:00'); return addDays(dateStr, -((d.getDay()+6)%7)); }
+function weekEmomId(dateStr){
+  const cfg=store.get('config'); const ws=(cfg&&cfg.emom&&cfg.emom.workouts)||[]; if(!ws.length) return null;
+  const wk=weekStartOf(dateStr||todayStr());
+  const done=(store.get('sessions')||[]).filter(s=>s.slot==='EMOM' && s.emomId)
+    .sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+  const thisWeek=done.find(s=>s.date>=wk && s.date<=addDays(wk,6));
+  if(thisWeek) return thisWeek.emomId;
+  const prior=done.filter(s=>s.date<wk);
+  if(!prior.length) return ws[0].id;
+  const lastWk=weekStartOf(prior[prior.length-1].date);
+  const anchor=prior.find(s=>s.date>=lastWk);
+  const i=ws.findIndex(w=>w.id===anchor.emomId);
+  return ws[(i+1)%ws.length].id;   // an id no longer in the program (i = -1) restarts at the first
+}
+function nextEmomId(){ return weekEmomId(todayStr()); }
 function renderEmomSession(variant){
+  // Only a genuine resume keeps the walk timer; a fresh session starts it clean.
+  if(!(sessionState && sessionState.restored)) finisherTimer.reset();
   const cfg=store.get('config'); const w=emomWorkout(variant.emomId)||{name:'EMOM',ex:[]};
   const baseRounds=(cfg&&cfg.emom&&cfg.emom.rounds)||3;
-  if(!sessionState.emom) sessionState.emom={emomId:variant.emomId, rounds: variant.degraded?Math.max(2,baseRounds-1):baseRounds, idx:0, endAt:null, remain:null, running:false};
+  if(!sessionState.emom) sessionState.emom={emomId:variant.emomId, rounds: variant.degraded?Math.max(2,baseRounds-1):baseRounds, idx:0, endAt:null, remain:null, running:false, done:false};
   const em=sessionState.emom;
   const stripe=variant.degraded?`<span class="badge yellow">YELLOW — ${em.rounds} rounds</span>`:`<span class="badge green">GREEN</span>`;
   return `<div class="screen active" style="padding-bottom:100px;">
@@ -2546,9 +2740,10 @@ function renderEmomSession(variant){
       <div class="microcopy" style="margin-top:6px;">Work the minute — no rep count</div>
       <button onclick="emomOpenVideo()" style="background:none;border:0;color:var(--accent);font-weight:700;font-size:15px;margin-top:10px;cursor:pointer;">▶ Open video</button>
     </div>
-    <button class="pill-btn accent" id="emom-start" onclick="emomToggle()">START</button>
+    <button class="pill-btn accent" id="emom-start" onclick="emomToggle()" style="display:${em.done?'none':''};">START</button>
     <button class="pill-btn ghost mt12" onclick="emomReset()">RESET</button>
-    <button class="pill-btn ghost mt12" onclick="emomDrop()">DROP A ROUND</button>
+    <button class="pill-btn ghost mt12" id="emom-drop" onclick="emomDrop()" style="display:${em.done?'none':''};">DROP A ROUND</button>
+    <div id="emom-walk" class="mt12" style="display:${em.done?'block':'none'};">${finisherCard({emom:true})}</div>
     ${stepsCard()}
     <div class="sticky-bar"><div class="sticky-bar-inner"><button class="pill-btn accent" onclick="finishEmomSession()">FINISH</button></div></div>
   </div>`;
@@ -2557,28 +2752,76 @@ function emomPaint(){
   const em=sessionState&&sessionState.emom; if(!em) return;
   const w=emomWorkout(em.emomId)||{ex:[]}; const per=w.ex.length||6; const total=em.rounds*per;
   const clock=document.getElementById('emom-clock'); if(!clock) return;
-  let left = em.running&&em.endAt ? em.endAt-Date.now() : (em.remain!=null?em.remain:60000);
-  if(em.running && left<=0){ beep(); em.idx++; if(em.idx>=total){ finishEmomSession(); return; } em.endAt=Date.now()+60000; left=60000; persistActive('session'); }
+  // Beeps fire only live. A long gap since the last repaint means the phone
+  // slept; a beep now would be late, so stay quiet (same guard as the rest timer).
+  const now=Date.now();
+  const live = emomLastPaint!=null && now-emomLastPaint < 1500;
+  emomLastPaint = now;
+  if(em.done){ emomShowDone(); return; }
+  let left = em.running&&em.endAt ? em.endAt-now : (em.remain!=null?em.remain:60000);
+  if(em.running && left<=0){
+    if(live) beep();
+    em.idx++;
+    if(em.idx>=total){ emomComplete(); return; }
+    em.endAt=now+60000; left=60000; persistActive('session');
+  }
   const s=Math.max(0,Math.ceil(left/1000));
+  // v2.1 (session note 8/25): short beep at 3, 2, 1 seconds left in each minute.
+  if(em.running && live && s>=1 && s<=3){
+    const cue=em.idx+':'+s;
+    if(cue!==emomLastCue){ emomLastCue=cue; beep(120, 660); }
+  }
   clock.textContent=Math.floor(s/60)+':'+pad(s%60);
   const round=Math.floor(em.idx/per)+1; const cur=w.ex[em.idx%per]||{name:'—'}; const nx=(em.idx+1<total)?(w.ex[(em.idx+1)%per]||{name:'—'}).name:'Done';
   const r=document.getElementById('emom-round'); if(r) r.textContent='Round '+round+' of '+em.rounds;
   const n=document.getElementById('emom-now'); if(n) n.textContent=cur.name;
   const nn=document.getElementById('emom-next'); if(nn) nn.textContent='Next · '+nx;
 }
+/* v2.1 (session notes 8/18, 8/20): the last minute ends ON the EMOM screen.
+   Nothing leaves the screen until FINISH — the walk block opens instead. */
+function emomComplete(){
+  const em=sessionState.emom;
+  em.running=false; em.done=true; em.endAt=null; em.remain=null;
+  clearInterval(emomInterval); emomInterval=null;
+  persistActive('session');
+  emomShowDone();
+}
+function emomShowDone(){
+  const set=(id,t)=>{ const el=document.getElementById(id); if(el) el.textContent=t; };
+  set('emom-clock','0:00'); set('emom-round','All rounds done'); set('emom-now','EMOM done');
+  set('emom-next','Walk below if you want, then FINISH.');
+  emomShowControls(true);
+}
+function emomShowControls(done){
+  const show=(id,on)=>{ const el=document.getElementById(id); if(el) el.style.display=on?'':'none'; };
+  show('emom-start',!done); show('emom-drop',!done);
+  const wk=document.getElementById('emom-walk'); if(wk) wk.style.display=done?'block':'none';
+}
 function emomToggle(){
-  const em=sessionState.emom; const btn=document.getElementById('emom-start');
-  if(!em.running){ em.running=true; em.endAt=Date.now()+(em.remain!=null?em.remain:60000); em.remain=null; clearInterval(emomInterval); emomInterval=setInterval(emomPaint,250); if(btn) btn.textContent='PAUSE'; }
+  const em=sessionState.emom; if(em.done) return;
+  const btn=document.getElementById('emom-start');
+  if(!em.running){ em.running=true; em.endAt=Date.now()+(em.remain!=null?em.remain:60000); em.remain=null; emomLastPaint=Date.now(); clearInterval(emomInterval); emomInterval=setInterval(emomPaint,250); if(btn) btn.textContent='PAUSE'; }
   else { em.running=false; em.remain=Math.max(0,em.endAt-Date.now()); clearInterval(emomInterval); emomInterval=null; if(btn) btn.textContent='RESUME'; }
   persistActive('session'); emomPaint();
 }
-function emomReset(){ const em=sessionState.emom; em.idx=0; em.endAt=null; em.remain=null; em.running=false; clearInterval(emomInterval); emomInterval=null; const b=document.getElementById('emom-start'); if(b) b.textContent='START'; persistActive('session'); emomPaint(); }
-function emomDrop(){ const em=sessionState.emom; if(em.rounds>2){ em.rounds--; const w=emomWorkout(em.emomId)||{ex:[]}; if(em.idx>=em.rounds*(w.ex.length||6)){ finishEmomSession(); return; } persistActive('session'); emomPaint(); } }
-function emomOpenVideo(){ const em=sessionState.emom; const w=emomWorkout(em.emomId)||{ex:[]}; const per=w.ex.length||6; const e=w.ex[em.idx%per]; if(e&&e.url) window.open(e.url,'_blank'); }
+function emomReset(){ const em=sessionState.emom; em.idx=0; em.endAt=null; em.remain=null; em.running=false; em.done=false; clearInterval(emomInterval); emomInterval=null; emomShowControls(false); const b=document.getElementById('emom-start'); if(b) b.textContent='START'; persistActive('session'); emomPaint(); }
+function emomDrop(){ const em=sessionState.emom; if(em.done) return; if(em.rounds>2){ em.rounds--; const w=emomWorkout(em.emomId)||{ex:[]}; if(em.idx>=em.rounds*(w.ex.length||6)){ emomComplete(); return; } persistActive('session'); emomPaint(); } }
+function emomOpenVideo(){ const em=sessionState.emom; if(em.done) return; const w=emomWorkout(em.emomId)||{ex:[]}; const per=w.ex.length||6; const e=w.ex[em.idx%per]; if(e&&e.url) window.open(e.url,'_blank'); }
 function finishEmomSession(){
   clearInterval(emomInterval); emomInterval=null;
   const em=sessionState.emom;
-  const draft={ date:sessionState.date||todayStr(), slot:'EMOM', emomId:em.emomId, rounds:em.rounds, readiness:(sessionState.variant&&sessionState.variant.readiness)||null, startedAt:sessionState.startedAt, min:Math.max(1,em.idx) };
+  // Pause rather than lose a running minute — Back from Finish resumes here.
+  if(em.running){ em.running=false; em.remain=Math.max(0,em.endAt-Date.now()); em.endAt=null; }
+  finisherTimer.stop();
+  const walkMin = sessionState.finisherMin!=null
+    ? sessionState.finisherMin
+    : (finisherTimer.elapsedSec()>0 ? finisherTimer.minutes() : 0);
+  const draft={ date:sessionState.date||todayStr(), slot:'EMOM', emomId:em.emomId, rounds:em.rounds, readiness:(sessionState.variant&&sessionState.variant.readiness)||null, startedAt:sessionState.startedAt, min:Math.max(1,em.idx)+walkMin };
+  // The walk is part of the session (Joel, 2026-09-30): logged as the finisher, minutes in the total.
+  if(walkMin>0){
+    draft.finisher={ mode:'walk', min:walkMin };
+    const fv=finisherVestLb(); if(fv) draft.finisher.vest=fv;
+  }
   const es = stepsDraft(); if(es) draft.steps = es;
   Nav.toFinish(draft);
 }

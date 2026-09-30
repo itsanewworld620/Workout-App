@@ -8,13 +8,19 @@ cd test
 node wos-test.js
 node test-v200.js
 node test-v160.js
+node test-v210.js
 ```
 
 Config and backup fixtures are read from Joel's OneDrive workout folder
 (`.../Cowork/workout/state/`). Point elsewhere with `WOS_DIR=<workout folder>`.
 `WOS_HTML` and `WOS_CONFIG` (wos-test only) still override single files.
 
-Baseline (2026-09-30, app v2.0.0): everything passes. Any failure is real.
+Baseline (2026-09-30, app v2.1.0): everything passes. Any failure is real.
+
+- `test-v210.js`: 82 pass / 0 fail. Fixture is `wos-backup.json` cut at
+  2026-09-29, clock pinned to Wed 2026-09-30 / Thu 2026-10-01. Covers the picker,
+  `offPlan`, EMOM of the week, weight→reps pad, EMOM done + walk, finisher vest,
+  live-only beeps, and Finish → Back.
 
 - `wos-test.js`: 164 pass / 0 fail. Sets are logged with `logSetAs`, which
   sets the weight/reps chips and then taps log, because `logSet` reads the chips.
