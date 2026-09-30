@@ -2,16 +2,20 @@
    Covers the v2.0 additions: schema migration, workouts library, exercise links,
    notes, warmup-in-session + steps schema, and the native kettlebell EMOM
    session type (schedule 'K' routing, rotation, YELLOW rounds, finish record).
-   Run:  NODE_PATH=../node_modules node test-v200.js
-   (reads ../index.html and ../../../state/block-2-config.json) */
+   Run:  node test-v200.js
+   (reads ../index.html and <WOS_DIR>/state/block-2-config.json) */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
+// Specs live in Joel's OneDrive workout folder, not this repo. Override with WOS_DIR.
+const WOS_DIR = process.env.WOS_DIR || 'C:/Users/JoelTerrell/OneDrive - Terrell World/Documents/Cowork/workout';
 const HTML = fs.readFileSync(process.env.WOS_HTML || path.join(__dirname, '../index.html'), 'utf8');
-const _raw = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../state/block-2-config.json'), 'utf8'));
+const _raw = JSON.parse(fs.readFileSync(path.join(WOS_DIR, 'state/block-2-config.json'), 'utf8'));
 const CFG = _raw.config || _raw;   // block-2-config is now a raw config (no wrapper)
-const fixed = new Date('2026-08-18T12:00:00').getTime(); // a Tuesday (an EMOM day)
+// A Monday. Since 2026-08-31 the block-2 schedule runs EMOM ('K') Mon/Wed/Fri;
+// Tuesday is now strength, which is why the old Tuesday date crashed finishEmomSession.
+const fixed = new Date('2026-08-17T12:00:00').getTime();
 
 let pass = 0, fail = 0; const F = [];
 function ok(n, c, d){ if(c){ pass++; console.log('  PASS  '+n); } else { fail++; F.push(n+(d!==undefined?(' :: got '+JSON.stringify(d)):'')); console.log('  FAIL  '+n+(d!==undefined?(' :: got '+JSON.stringify(d)):'')); } }

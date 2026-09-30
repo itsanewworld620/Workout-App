@@ -1,9 +1,23 @@
-/* v1.6.0 logic tests against the real 2026-07-31 backup fixture. */
+/* v1.6.0 logic tests against the real 2026-07-31 backup fixture.
+   The 2026-07-31 backup file no longer exists, so it is rebuilt from the latest
+   backup: every record dated on or before 2026-07-31 (old records are never
+   rewritten) plus the block-1 config that was live then. */
 const fs = require('fs');
+const path = require('path');
 const vm = require('vm');
 
-const html = fs.readFileSync('/sessions/great-happy-lamport/mnt/workout/Current App Build/Workout App/index.html','utf8');
-const backup = JSON.parse(fs.readFileSync('/sessions/great-happy-lamport/mnt/workout/state/wos-backup.json','utf8'));
+// Specs live in Joel's OneDrive workout folder, not this repo. Override with WOS_DIR.
+const WOS_DIR = process.env.WOS_DIR || 'C:/Users/JoelTerrell/OneDrive - Terrell World/Documents/Cowork/workout';
+const html = fs.readFileSync(process.env.WOS_HTML || path.join(__dirname, '../index.html'),'utf8');
+const latest = JSON.parse(fs.readFileSync(path.join(WOS_DIR, 'state/wos-backup.json'),'utf8'));
+const block1 = JSON.parse(fs.readFileSync(path.join(WOS_DIR, 'state/block-1-config.json'),'utf8'));
+const upTo731 = d => !!d && d <= '2026-07-31';
+const backup = Object.assign({}, latest, {
+  config: block1.config || block1,
+  sessions: (latest.sessions||[]).filter(s => upTo731(s.date)),
+  daily: (latest.daily||[]).filter(s => upTo731(s.date)),
+  weekly: (latest.weekly||[]).filter(s => upTo731(s.weekOf))
+});
 const m = html.match(/<script>([\s\S]*)<\/script>/);
 if(!m) throw new Error('no script block');
 let script = m[1];

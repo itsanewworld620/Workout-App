@@ -1,10 +1,13 @@
 /* WOS v1.5.0 verification suite (jsdom).
    Covers the v1.5 features and the v1.4.0 regression set. */
 const fs = require('fs');
+const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const HTML = fs.readFileSync(process.env.WOS_HTML, 'utf8');
-const CONFIG = JSON.parse(fs.readFileSync(process.env.WOS_CONFIG, 'utf8'));
+// Specs live in Joel's OneDrive workout folder, not this repo. Override with WOS_DIR.
+const WOS_DIR = process.env.WOS_DIR || 'C:/Users/JoelTerrell/OneDrive - Terrell World/Documents/Cowork/workout';
+const HTML = fs.readFileSync(process.env.WOS_HTML || path.join(__dirname, '../index.html'), 'utf8');
+const CONFIG = JSON.parse(fs.readFileSync(process.env.WOS_CONFIG || path.join(WOS_DIR, 'state/block-1-config.json'), 'utf8'));
 
 let pass = 0, fail = 0;
 const failures = [];
