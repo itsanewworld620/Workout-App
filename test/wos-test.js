@@ -23,6 +23,14 @@ const netRequests = [];
 /* v1.6.0 added a finisher-confirm sheet: finishing a strength session with zero
    finisher minutes shows a confirm before proceeding to Finish. This helper
    clicks through it so the suite reaches saveSession, matching real use. */
+/* logSet takes no values: it logs whatever the weight/reps chips show (the
+   pre-fill, or what the user typed). This helper sets the chips first, the way a
+   user edits them, then taps log. */
+function logSetAs(w, ex, set, weight, reps){
+  w.document.getElementById('wchip-'+ex+'-'+set).textContent = String(weight);
+  w.document.getElementById('rchip-'+ex+'-'+set).textContent = String(reps);
+  w.logSet(ex, set);
+}
 function finishStrength(w){ w.finishStrengthSession(); const b = w.document.getElementById('cs-cancel'); if(b) b.click(); }
 
 /* Boot a fresh app instance with a fixed clock and seeded storage. */
@@ -117,8 +125,8 @@ let midSessionSeed = null;
   ok('start button carries GREEN state', btn.classList.contains('green'));
   w.startSession();
   ok('active written on entering session', storeOf(dom, 'active') !== null);
-  w.logSet(0, 0, 30, 10);
-  w.logSet(0, 1, 30, 10);
+  logSetAs(w, 0, 0, 30, 10);
+  logSetAs(w, 0, 1, 30, 10);
   const a = storeOf(dom, 'active');
   eq('logged sets persisted immediately', a.exercises[0].sets.filter(Boolean).length, 2);
   eq('persisted set values', a.exercises[0].sets[0], { weight: 30, reps: 10 });
@@ -171,7 +179,7 @@ console.log('\n== 5. Finish + save clears active and replays lifts ==');
   w.setReadiness('sleep', 5); w.setReadiness('sore', 5); w.setReadiness('energy', 5);
   w.startSession();
   // config gives 2 sets in weeks 1-2; hit the top of the range on both
-  w.logSet(0, 0, 30, 12); w.logSet(0, 1, 30, 12);
+  logSetAs(w, 0, 0, 30, 12); logSetAs(w, 0, 1, 30, 12);
   finishStrength(w);
   w.setRPE(6);
   w.saveSession(47);
@@ -248,7 +256,7 @@ console.log('\n== 9. Manual backfill lands, counts, and is flagged ==');
   w.manualPickSlot('A');
   w.manualProceed(true);                    // "don't remember"
   ok('manual strength session opened', !!w.document.getElementById('circ-0-0'));
-  w.logSet(0, 0, 30, 12); w.logSet(0, 1, 30, 12);
+  logSetAs(w, 0, 0, 30, 12); logSetAs(w, 0, 1, 30, 12);
   finishStrength(w);
   ok('finish screen offers editable duration', !!w.document.getElementById('finish-min'));
   ok('manual banner shown', /Marked as a manual entry/.test(txt(dom)));
@@ -283,7 +291,7 @@ console.log('\n== 10. Edit a saved session -> replay corrects lift state ==');
   await tick();                                     // renderManualForEdit defers by a tick
   ok('edit opens the session screen', !!w.document.getElementById('circ-0-0'));
   // correct the record: it was really 8 reps, not 12 -> must not advance
-  w.logSet(0, 0, 30, 8); w.logSet(0, 1, 30, 8);
+  logSetAs(w, 0, 0, 30, 8); logSetAs(w, 0, 1, 30, 8);
   finishStrength(w);
   w.setRPE(6);
   w.saveSession(45);
@@ -538,7 +546,7 @@ console.log('\n== 16. Wall-clock timers survive a simulated device sleep ==');
   w.Nav.home();
   w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
   w.startSession();
-  w.logSet(0, 0, 30, 10);
+  logSetAs(w, 0, 0, 30, 10);
   ok('rest timer visible', /Rest/.test(txt(dom)));
   w.__clockOffset = 120 * 1000;           // long sleep, rest ended during it
   let vibrated = false;
@@ -557,7 +565,7 @@ console.log('\n== 17. Stale session from a previous day is offered, not dropped 
   w.Nav.home();
   w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
   w.startSession();
-  w.logSet(0, 0, 30, 10);
+  logSetAs(w, 0, 0, 30, 10);
   const seed = dump(dom);
   dom.window.close();
 
@@ -640,7 +648,7 @@ console.log('\n== 20. Edit pre-fills the record instead of blanking it ==');
   eq('edit exposes the full set count, not the YELLOW-reduced one',
      w.document.querySelectorAll('.ex-card')[0].querySelectorAll('.set-row').length, 2);
   // change one rep and save; everything else must survive untouched
-  w.logSet(0, 1, 35, 10);
+  logSetAs(w, 0, 1, 35, 10);
   finishStrength(w);
   w.setRPE(7);
   w.saveSession(45);
@@ -741,7 +749,7 @@ console.log('\n== 23. Duration is editable on every session, timer or not ==');
   w.Nav.home();
   w.setReadiness('sleep', 4); w.setReadiness('sore', 4); w.setReadiness('energy', 4);
   w.startSession();
-  w.logSet(0, 0, 30, 10);
+  logSetAs(w, 0, 0, 30, 10);
   finishStrength(w);
   const fm = w.document.getElementById('finish-min');
   ok('strength duration editable too', !!fm);
@@ -887,7 +895,8 @@ console.log('\n== 25. Hygiene ==');
   eq('no console errors across the suite', consoleErrors, []);
   eq('zero network requests after load', netRequests, []);
   const html = HTML;
-  ok('APP_VERSION bumped to 1.5.3', /const APP_VERSION = '1\.5\.3'/.test(html));
+  // The exact version is checked in each build's own test-vXYZ.js.
+  ok('APP_VERSION is set', /const APP_VERSION = '\d+\.\d+\.\d+'/.test(html));
   ok('no webfonts or CDN links', !/https?:\/\/(fonts|cdn)/i.test(html));
   ok('no leftover manual-min references', !/manual-min/.test(html));
 }

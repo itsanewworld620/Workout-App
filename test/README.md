@@ -14,16 +14,17 @@ Config and backup fixtures are read from Joel's OneDrive workout folder
 (`.../Cowork/workout/state/`). Point elsewhere with `WOS_DIR=<workout folder>`.
 `WOS_HTML` and `WOS_CONFIG` (wos-test only) still override single files.
 
-Baseline (2026-09-30, app v2.0.0). Every failure below is a stale expectation,
-not an app bug; no new failures are allowed on top of these:
+Baseline (2026-09-30, app v2.0.0): everything passes. Any failure is real.
 
-- `wos-test.js`: 154 pass / 10 fail. 9 trace to a reps 8-vs-10 mismatch
-  between the test's expectations and the block-1 config; 1 expects `APP_VERSION` 1.5.3.
+- `wos-test.js`: 164 pass / 0 fail. Sets are logged with `logSetAs`, which
+  sets the weight/reps chips and then taps log, because `logSet` reads the chips.
 - `test-v200.js`: 17 pass / 0 fail. Pinned to Monday 2026-08-17 (an EMOM day
   under the 2026-08-31 schedule).
-- `test-v160.js`: 25 pass / 1 fail. The 1 expects `APP_VERSION` 1.6.0. Its
-  2026-07-31 fixture is rebuilt from `wos-backup.json` (records up to that date)
-  plus `block-1-config.json`.
+- `test-v160.js`: 26 pass / 0 fail. Its 2026-07-31 fixture is rebuilt from
+  `wos-backup.json` (records up to that date) plus `block-1-config.json`.
+
+The older files only check that `APP_VERSION` is set; each build's own
+`test-vXYZ.js` checks the exact version.
 
 `wos-test.js` covers the v1.5.x adherence and typed-duration rules, v1.5.0
 autosave/resume, exit guards, manual entry, edit/delete replay, and the v1.4.0

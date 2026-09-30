@@ -26,10 +26,10 @@ Do not copy these files into the repo. One master copy each.
 4. Scope-fence: change what was asked. Flag anything else you notice; do not fix it unasked.
 5. Must not change: readiness before every session; RED always routes to recovery; `sessions` is the single source of truth and `lifts` is rebuilt from it; autosave to `active` on every tap; timers anchored to wall-clock time; backup and restore lose nothing; old session records are never rewritten.
 6. Test every build: `npm install jsdom` (local only, not committed), then from `test/` run `node <file>` for every file in `test/`. Tests read fixtures from the workout folder by default (override with `WOS_DIR`). Baseline checked 2026-09-30 on v2.0.0:
-   - `test/wos-test.js`: 154 pass / 10 fail (the 10 are old stale expectations: 9 reps 8-vs-10, 1 `APP_VERSION` 1.5.3).
+   - `test/wos-test.js`: 164 pass / 0 fail.
    - `test/test-v200.js`: 17 pass / 0 fail.
-   - `test/test-v160.js`: 25 pass / 1 fail (stale `APP_VERSION` 1.6.0 check).
-   Details in `test/README.md`. No new failures allowed. Add a test file per build (`test/test-vXYZ.js`).
+   - `test/test-v160.js`: 26 pass / 0 fail.
+   Details in `test/README.md`. Every build must keep all tests at zero failures. Add a test file per build (`test/test-vXYZ.js`).
 7. Record each build in `state/decisions.md`: dated, what changed, why, test results, what is still unverified on the phone.
 8. Commit when a build passes. Push only when Joel says; pushing is what deploys to his phone.
 9. On-device checks (beeps, vibrate, Android back button, home-screen app mode) cannot be tested here. List them for Joel after each build.
