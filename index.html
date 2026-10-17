@@ -143,6 +143,59 @@ input[type=text], input[type=number]{background:var(--surface-2); border:none; b
 .modal-sheet{background:var(--surface); width:100%; max-width:520px; border-radius:20px 20px 0 0; padding:20px; padding-bottom:calc(24px + var(--safe-b));}
 .link{color:var(--accent); font-weight:600; cursor:pointer; text-decoration:none;}
 select{background:var(--surface-2); color:var(--text); border:none; border-radius:16px; padding:12px; font-size:17px; font-family:inherit; width:100%;}
+
+/* v2.2 EMOM screens (timer, done, past). Sizes from the approved mockup. */
+.screen.active.emom-col{display:flex; flex-direction:column; gap:12px; min-height:calc(100vh - 84px - var(--safe-b));}
+.emom-col > *{flex-shrink:0;}
+.emom-grow{flex-grow:1;}
+.emom-grid2{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;}
+.emom-pick{height:60px; border:none; border-radius:14px; background:var(--surface-2); color:#fff; font-size:17px; font-weight:700; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; cursor:pointer;}
+.emom-pick.sel{background:var(--accent);}
+.emom-pick-tag{font-size:12px; font-weight:600; opacity:.8;}
+.emom-step{width:48px; height:48px; border:none; border-radius:999px; background:var(--chip); color:#fff; font-size:28px; font-weight:700; cursor:pointer;}
+.emom-lab{min-width:0; display:flex; flex-direction:column; gap:6px; font-size:13px; font-weight:500; color:var(--text-2);}
+input.emom-in{width:100%; height:48px; border:none; border-radius:12px; background:var(--chip); color:#fff; font-size:20px; font-weight:700; padding:0 14px; font-family:inherit;}
+input.emom-in::placeholder{color:var(--text-2);}
+.emom-name{font-size:20px; font-weight:800; letter-spacing:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;}
+.emom-dbar{flex:1; height:8px; border-radius:4px; background:var(--chip);}
+.emom-dbar.full{background:var(--accent);}
+.emom-head{display:flex; justify-content:space-between; align-items:center; gap:12px;}
+.emom-pill{font-size:16px; font-weight:700; border-radius:999px; padding:6px 16px; white-space:nowrap; background:var(--chip);}
+.emom-pill.ready{background:var(--accent);}
+.emom-meter{display:flex; align-items:center; gap:12px;}
+.emom-segs{flex-grow:1; display:flex; gap:6px;}
+.emom-rgrp{flex:1; display:flex; gap:3px;}
+.emom-seg{flex:1; height:8px; border-radius:4px; overflow:hidden; background:var(--chip);}
+.emom-seg.full{background:var(--accent);}
+.emom-seg i{display:block; height:100%; width:0; background:#fff;}
+.emom-left{font-size:18px; font-weight:800; white-space:nowrap;}
+.emom-left span{font-size:13px; font-weight:600; color:var(--text-2);}
+.emom-now{background:var(--surface); border-radius:24px; padding:12px 18px 18px; display:flex; flex-direction:column; gap:2px;}
+.emom-next{background:var(--surface-2); border-radius:20px; padding:14px 18px; display:flex; flex-direction:column; gap:4px;}
+.emom-lbl{font-size:15px; font-weight:800; letter-spacing:3px; color:var(--text-2);}
+.emom-video{background:transparent; border:none; color:#7F93FF; font-size:15px; font-weight:700; height:44px; padding:0 4px; display:flex; align-items:center; gap:6px; cursor:pointer;}
+.emom-nowname{font-size:64px; font-weight:800; line-height:1.02; letter-spacing:-1.5px; text-align:center; overflow-wrap:anywhere;}
+.emom-nextname{font-size:52px; font-weight:700; line-height:1.1; letter-spacing:-0.5px; text-align:center; overflow-wrap:anywhere;}
+.emom-chip{font-size:13px; font-weight:700; background:var(--chip); border-radius:999px; padding:4px 10px; white-space:nowrap;}
+.emom-box{height:128px; border-radius:24px; background:var(--surface); display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative;}
+.emom-box.warn{background:var(--accent);}
+.emom-box-lbl{font-size:13px; font-weight:800; letter-spacing:3px; color:var(--text-2);}
+.emom-box.ready .emom-box-lbl{color:#7F93FF;}
+.emom-box.warn .emom-box-lbl{color:#fff;}
+.emom-tval{font-size:84px; font-weight:800; line-height:1; letter-spacing:-2px;}
+.emom-box.paused .emom-tval{opacity:.45;}
+.emom-paused{display:none; position:absolute; top:10px; right:12px; font-size:13px; font-weight:800; letter-spacing:2px; background:#fff; color:var(--bg); border-radius:999px; padding:4px 12px;}
+.emom-box.paused .emom-paused{display:block;}
+.emom-ctrls{display:flex; gap:8px;}
+.emom-ctrl{flex:1; height:60px; border:none; border-radius:16px; background:var(--chip); color:#fff; font-size:17px; font-weight:700; cursor:pointer; transition:transform 120ms ease-out;}
+.emom-ctrl:active{transform:scale(0.96);}
+.emom-drop{height:44px; width:100%; background:transparent; border:2px solid var(--line); border-radius:999px; color:#C9CDD3; font-size:15px; font-weight:700; cursor:pointer;}
+.emom-flash{position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:40;}
+.emom-flash.go{animation:emomflash .45s ease-out;}
+@keyframes emomflash{0%{opacity:.55;}100%{opacity:0;}}
+.emom-ask{position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; padding:24px; z-index:50;}
+.emom-askbox{width:100%; max-width:420px; background:var(--surface); border-radius:24px; padding:32px 24px; display:flex; flex-direction:column; align-items:center; gap:12px;}
+.emom-askbtn{flex:1; height:60px; border:none; border-radius:999px; color:#fff; font-size:18px; font-weight:800; cursor:pointer;}
 </style>
 </head>
 <body>
@@ -170,7 +223,7 @@ select{background:var(--surface-2); color:var(--text); border:none; border-radiu
 
 <script>
 'use strict';
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.2.0';
 
 /* ---------- wall-clock timers ----------
    All in-session timers derive their value from Date.now() timestamps, never
@@ -219,6 +272,10 @@ function refreshTimers(){
   try{
     if(restEndAt!=null) renderRestTimer();
     cardioTimer.render(); recTimer.render(); outdoorTimer.render(); finisherTimer.render();
+    // v2.2: the EMOM timer jumps to the right minute on wake and takes the wake lock back.
+    if(sessionState && sessionState.emom && sessionState.emom.stage==='run' && document.getElementById('emom-screen')){
+      emomPaint(); emomLockScreen();
+    }
   }catch(e){}
 }
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) refreshTimers(); });
@@ -597,6 +654,7 @@ const Nav = {
 let lastRender = {name:'home', params:null};
 const Screens = { render(name,params){
   if(typeof emomInterval!=='undefined' && emomInterval){ clearInterval(emomInterval); emomInterval=null; }
+  if(typeof emomUnlockScreen==='function'){ emomUnlockScreen(); emomCloseAsk(); }   // v2.2: the wake lock is only for the EMOM timer
   lastRender = {name, params};
   const app=document.getElementById('app');
   app.innerHTML='';
@@ -653,7 +711,7 @@ function renderHome(){
           <div class="card-header"><div class="card-title">Session in progress</div></div>
           <div class="sub">${activeSummary(active)}</div>
         </div>
-        <button class="pill-btn accent mt12" onclick="resumeActive()">RESUME SESSION</button>
+        <button class="pill-btn accent mt12" onclick="resumeActive()">RESUME ${(active.variant && active.variant.kind==='EMOM' && !active.variant.manual) ? escHtml(emomShortName(active.variant.emomId)).toUpperCase() : 'SESSION'}</button>
         <button class="pill-btn ghost mt12" onclick="discardActive()">DISCARD</button>
         <div class="microcopy mt16 center">Everything you logged is saved.</div>
       </div>`;
@@ -845,6 +903,7 @@ function activeSummary(a){
   else if(v.kind==='REC') what = 'Recovery';
   else if(v.kind==='MVS') what = 'MVS — ' + (v.mvsType||'');
   else if(v.kind==='MVS_PICK') what = 'MVS — pick a tier';
+  else if(v.kind==='EMOM') what = (v.manual ? 'Past ' : '') + emomShortName(v.emomId || (a.emom && a.emom.emomId));   // v2.2 §D2
   let logged = 0;
   (a.exercises||[]).forEach(r=>(r.sets||[]).forEach(s=>{ if(s) logged++; }));
   (a.mvsItems||[]).forEach(it=>(it.logged||[]).forEach(x=>{ if(x) logged++; }));
@@ -867,6 +926,7 @@ function resumeActive(){
     Nav.toFinish(a.finishDraft);
     return;
   }
+  if(a.variant && a.variant.kind==='EMOM') emomUnlockAudio();   // v2.2: this tap opens the audio path
   Nav.toSession(a.variant, a);
 }
 
@@ -938,6 +998,9 @@ function buildDraftFromActive(a){
     const cw = {mode: a.mode||'incline_walk', min: cardioTimer.minutes()||20};
     if(a.vest!=null && a.vest>0) cw.vest = a.vest;
     base.work = [cw];
+  } else if(v.kind==='EMOM'){
+    // v2.2 §D1: was falling through to recovery. Same builder as the live finish.
+    return emomDraftFrom(a);
   } else if(v.kind==='MVS' && v.mvsType==='outdoor'){
     base.slot='MVS'; base.mvsType='outdoor'; base.min = outdoorTimer.minutes()||20;
   } else if(v.kind==='MVS'){
@@ -1053,6 +1116,7 @@ function startSession(){
   }
   // RED recovery is the rule, not a choice, so it is never offPlan.
   if(variant.kind!=='REC' && rec && !samePick(variant, rec)) variant.offPlan = true;
+  if(variant.kind==='EMOM') emomUnlockAudio();   // v2.2: open the audio path on this tap so the EMOM sounds can play
   window._weeklyFieldsPending = weeklyFields;
   saveWeeklyIfSunday();
   saveBWIfEntered();
@@ -2132,6 +2196,7 @@ function manualPickDate(d){
         <div class="microcopy mt8">Pick what you actually did.</div></div>
       <button class="pill-btn ghost mt8" onclick="manualPickSlot('A')">STRENGTH A</button>
       <button class="pill-btn ghost mt8" onclick="manualPickSlot('B')">STRENGTH B</button>
+      ${hasEmom(cfg) ? `<button class="pill-btn ghost mt8" onclick="manualPickSlot('EMOM')">KETTLEBELL EMOM</button>` : ''}
       <button class="pill-btn ghost mt8" onclick="manualPickSlot('C')">CARDIO</button>
       <button class="pill-btn ghost mt8" onclick="manualPickSlot('MVS')">MVS</button>
       <button class="pill-btn ghost mt8" onclick="manualPickSlot('REC')">RECOVERY</button>
@@ -2172,6 +2237,9 @@ function manualProceed(dontRemember){
     // A manual strength session renders full set rows so it feeds progression
     // like any live session. Degraded only if a remembered readiness says so.
     Nav.toSession(Object.assign({kind:'STRENGTH', letter:slot, degraded: !!(r && r.state==='YELLOW')}, base));
+  } else if(slot==='EMOM'){
+    // v2.2: a manual EMOM opens the past-EMOM details screen, not the timer.
+    Nav.toSession(Object.assign({kind:'EMOM'}, base));
   } else if(slot==='C'){
     Nav.toSession(Object.assign({kind:'CARDIO', degraded: !!(r && r.state==='YELLOW')}, base));
   } else if(slot==='MVS'){
@@ -2196,6 +2264,9 @@ function renderManualForEdit(idx){
       Nav.toSession(Object.assign({kind:'CARDIO', degraded:false}, base));
     } else if(s.slot==='MVS'){
       Nav.toSession(Object.assign({kind:'MVS', mvsType:s.mvsType||'gym'}, base));
+    } else if(s.slot==='EMOM'){
+      // v2.2: was falling through to the recovery screen.
+      Nav.toSession(Object.assign({kind:'EMOM', emomId:s.emomId}, base));
     } else {
       Nav.toSession(Object.assign({kind:'REC'}, base));
     }
@@ -2588,12 +2659,7 @@ function afterRender(name, params){
   if(name==='home'){
     updateStartBtn();
   }
-  if(name==='session' && sessionState && sessionState.emom){
-    emomPaint();
-    const b=document.getElementById('emom-start');
-    if(sessionState.emom.running){ clearInterval(emomInterval); emomInterval=setInterval(emomPaint,250); if(b) b.textContent='PAUSE'; }
-    else if(b){ b.textContent=(sessionState.emom.idx>0||sessionState.emom.remain!=null)?'RESUME':'START'; }
-  }
+  if(name==='session' && sessionState && sessionState.emom) emomAfterRender();
 }
 
 /* ===================== v2.0 features ===================== */
@@ -2698,7 +2764,6 @@ function exDurReset(idx, secs){ const t=exTimers[idx]; if(t){ t.run=false; if(t.
 /* ---- EMOM (Leevi's path — time-based, every minute) ---- */
 let emomInterval=null;
 let emomLastPaint=null;   // wall-clock time of the previous repaint; a big gap means the phone just woke
-let emomLastCue=null;     // "idx:sec" of the last countdown beep, so each fires once
 function emomWorkout(id){ const cfg=store.get('config'); return ((cfg&&cfg.emom&&cfg.emom.workouts)||[]).find(w=>w.id===id)||null; }
 /* EMOM of the week (v2.1). The week runs Monday–Sunday. The first EMOM logged
    in a week sets it for that week — whether the app or Joel picked it — and any
@@ -2722,108 +2787,517 @@ function weekEmomId(dateStr){
   return ws[(i+1)%ws.length].id;   // an id no longer in the program (i = -1) restarts at the first
 }
 function nextEmomId(){ return weekEmomId(todayStr()); }
-function renderEmomSession(variant){
-  // Only a genuine resume keeps the walk timer; a fresh session starts it clean.
-  if(!(sessionState && sessionState.restored)) finisherTimer.reset();
-  const cfg=store.get('config'); const w=emomWorkout(variant.emomId)||{name:'EMOM',ex:[]};
-  const baseRounds=(cfg&&cfg.emom&&cfg.emom.rounds)||3;
-  if(!sessionState.emom) sessionState.emom={emomId:variant.emomId, rounds: variant.degraded?Math.max(2,baseRounds-1):baseRounds, idx:0, endAt:null, remain:null, running:false, done:false};
+function emomPer(id){ const w=emomWorkout(id); return (w && w.ex && w.ex.length) || 6; }
+function emomShortName(id){ const w=emomWorkout(id); return ((w && w.name) || 'Kettlebell EMOM').replace(/Kettlebell/i,'KB'); }
+
+/* ---- v2.2 EMOM clock (ported from the PE class timer) ----
+   Never counted: elapsed = pausedAt while paused, else now − base. The minute,
+   move and time left are worked out from elapsed on every repaint, so a phone
+   that slept lands on the right minute on wake. [The v2.0 timer re-armed one
+   minute per repaint, so a 5-minute sleep moved it forward only one minute
+   and restarted a full one — logged 2026-09-30.] */
+const EMOM_READY_MS=10000, EMOM_MIN_MS=60000;
+function emomElapsed(em){ return em.pausedAt!=null ? em.pausedAt : Date.now()-em.base; }
+function emomSetElapsed(em, ms){ ms=Math.max(0,ms); if(em.pausedAt!=null) em.pausedAt=ms; else em.base=Date.now()-ms; }
+function emomWhere(e, total){
+  if(e < EMOM_READY_MS) return { seg:-1, segLeft:EMOM_READY_MS-e };
+  const m=Math.floor((e-EMOM_READY_MS)/EMOM_MIN_MS);
+  if(m >= total) return { seg:total, segLeft:0 };
+  return { seg:m, segLeft:EMOM_MIN_MS-((e-EMOM_READY_MS)-m*EMOM_MIN_MS) };
+}
+/* A 2.1.0 `active` EMOM ({idx,endAt,remain,running,done}) converts on read:
+   done stays done; otherwise it comes back paused at the start of its minute. */
+function emomMigrate(em){
+  if(!em || em.past || em.v===2) return em;
+  const per=emomPer(em.emomId), rounds=em.rounds||3;
+  if(em.done) return { v:2, emomId:em.emomId, rounds, base:Date.now(), pausedAt:EMOM_READY_MS+rounds*per*EMOM_MIN_MS,
+                       stage:'done', doneMin:rounds*per, doneRounds:rounds, ended:false };
+  return { v:2, emomId:em.emomId, rounds, base:Date.now(), pausedAt:EMOM_READY_MS+(em.idx||0)*EMOM_MIN_MS, stage:'run' };
+}
+/* Whole minutes and full rounds done so far. A timer still running counts by
+   the clock (an EMOM left running overnight reads as complete). */
+function emomDoneSoFar(em){
+  em=emomMigrate(em);
+  if(!em) return {min:0, rounds:0};
+  if(em.stage==='done') return {min:em.doneMin||0, rounds:em.doneRounds||0};
+  const per=emomPer(em.emomId), total=em.rounds*per;
+  const p=emomWhere(emomElapsed(em), total);
+  const min=p.seg<0 ? 0 : Math.min(p.seg, total);
+  return {min, rounds:Math.floor(min/per)};
+}
+
+/* ---- v2.2: log a past EMOM (Screen 6). No timer: which EMOM, rounds, minutes,
+   optional walk + vest. Also the edit screen for any saved EMOM record. ---- */
+function renderEmomPast(variant){
+  const cfg=store.get('config');
+  const ws=(cfg && cfg.emom && cfg.emom.workouts) || [];
+  const date=sessionState.date || todayStr();
+  const wk=weekEmomId(date);
+  if(!sessionState.emom || !sessionState.emom.past){
+    const ex=variant.existing;
+    const walk=(ex && ex.finisher && ex.finisher.min) || 0;
+    sessionState.emom={ past:true,
+      emomId: (ex && ex.emomId) || variant.emomId || wk,
+      rounds: (ex && ex.rounds!=null) ? ex.rounds : ((cfg && cfg.emom && cfg.emom.rounds) || 3),
+      emomMin: ex ? Math.max(0, (ex.min||0) - walk) : null };
+  }
   const em=sessionState.emom;
-  const stripe=variant.degraded?`<span class="badge yellow">YELLOW — ${em.rounds} rounds</span>`:`<span class="badge green">GREEN</span>`;
-  return `<div class="screen active" style="padding-bottom:100px;">
-    <div class="flex-between mt8" style="margin-bottom:12px;"><h1 class="title" style="margin-bottom:0;font-size:24px;">${escHtml(w.name)}</h1>${stripe}</div>
-    <div class="card center">
-      <div class="microcopy" id="emom-round">Round 1 of ${em.rounds}</div>
-      <div class="timer-pill" id="emom-clock" style="font-size:58px;">1:00</div>
-      <div style="font-size:22px;font-weight:800;margin-top:8px;" id="emom-now">—</div>
-      <div class="microcopy" id="emom-next">Next · —</div>
-      <div class="microcopy" style="margin-top:6px;">Work the minute — no rep count</div>
-      <button onclick="emomOpenVideo()" style="background:none;border:0;color:var(--accent);font-weight:700;font-size:15px;margin-top:10px;cursor:pointer;">▶ Open video</button>
+  const btns=ws.map(w=>`
+      <button class="emom-pick${w.id===em.emomId?' sel':''}" id="past-emom-${w.id}" onclick="setPastEmom('${w.id}')">
+        <span>${escHtml(w.name.replace(/^Kettlebell\s+/i,''))}</span><span class="emom-pick-tag">${w.id===wk?'this week':'&nbsp;'}</span>
+      </button>`).join('');
+  const prefs=store.get('prefs')||{};
+  const vest=sessionState.finisherVest!=null ? sessionState.finisherVest : '';
+  const walk=sessionState.finisherMin!=null ? sessionState.finisherMin : '';
+  const vestChip=(prefs.vestLb && vest==='') ? `<button class="chip mt8" id="vest-chip" onclick="applyVestDefault('finisherVest')">Vest ${prefs.vestLb} lb</button>` : '';
+  const dateLine=new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short', month:'short', day:'numeric'});
+  return `<div class="screen active emom-col" id="emom-past">
+    <a class="link" style="font-size:15px;padding:8px 0;" onclick="pastEmomBack()">‹ Back</a>
+    <div><h1 class="title" style="margin:0;">Past EMOM</h1>
+      <div class="sub">${dateLine} · ${variant.existing ? 'editing a saved session' : 'logged from memory'}</div></div>
+    <div class="card" style="margin:0;">
+      <div class="sub" style="margin-bottom:10px;">Which EMOM</div>
+      <div class="emom-grid2">${btns}</div>
     </div>
-    <button class="pill-btn accent" id="emom-start" onclick="emomToggle()" style="display:${em.done?'none':''};">START</button>
-    <button class="pill-btn ghost mt12" onclick="emomReset()">RESET</button>
-    <button class="pill-btn ghost mt12" id="emom-drop" onclick="emomDrop()" style="display:${em.done?'none':''};">DROP A ROUND</button>
-    <div id="emom-walk" class="mt12" style="display:${em.done?'block':'none'};">${finisherCard({emom:true})}</div>
-    ${stepsCard()}
-    <div class="sticky-bar"><div class="sticky-bar-inner"><button class="pill-btn accent" onclick="finishEmomSession()">FINISH</button></div></div>
+    <div class="card" style="margin:0;display:flex;align-items:center;gap:16px;">
+      <span class="row" style="flex:1;">Rounds done</span>
+      <button class="emom-step" aria-label="Fewer rounds" onclick="setPastRounds(-1)">−</button>
+      <span id="past-rounds" style="font-size:36px;font-weight:800;min-width:28px;text-align:center;">${em.rounds}</span>
+      <button class="emom-step" aria-label="More rounds" onclick="setPastRounds(1)">+</button>
+    </div>
+    <div class="card" style="margin:0;display:flex;flex-direction:column;gap:12px;">
+      <div class="emom-grid2">
+        <label class="emom-lab">EMOM minutes<input class="emom-in" id="past-emom-min" type="text" inputmode="numeric" value="${pastEmomMin()}" oninput="setPastEmomMin(this.value)"></label>
+        <label class="emom-lab">Walk after (min)<input class="emom-in" id="finisher-min" type="text" inputmode="numeric" placeholder="0" value="${walk}" oninput="setFinisherMin(this.value)"></label>
+      </div>
+      <label class="emom-lab">Vest on the walk (lb)<input class="emom-in" id="vest-lb" type="text" inputmode="decimal" placeholder="none" value="${vest}" oninput="setVest(this.value,'finisherVest')"></label>
+      ${vestChip}
+      <div class="microcopy">EMOM minutes fill in as rounds × ${emomPer(em.emomId)}. Type over it if it was different.</div>
+    </div>
+    <button class="pill-btn accent" onclick="finishEmomPast()">NEXT: FINISH</button>
   </div>`;
 }
-function emomPaint(){
-  const em=sessionState&&sessionState.emom; if(!em) return;
-  const w=emomWorkout(em.emomId)||{ex:[]}; const per=w.ex.length||6; const total=em.rounds*per;
-  const clock=document.getElementById('emom-clock'); if(!clock) return;
-  // Beeps fire only live. A long gap since the last repaint means the phone
-  // slept; a beep now would be late, so stay quiet (same guard as the rest timer).
-  const now=Date.now();
-  const live = emomLastPaint!=null && now-emomLastPaint < 1500;
-  emomLastPaint = now;
-  if(em.done){ emomShowDone(); return; }
-  let left = em.running&&em.endAt ? em.endAt-now : (em.remain!=null?em.remain:60000);
-  if(em.running && left<=0){
-    if(live) beep();
-    em.idx++;
-    if(em.idx>=total){ emomComplete(); return; }
-    em.endAt=now+60000; left=60000; persistActive('session');
-  }
-  const s=Math.max(0,Math.ceil(left/1000));
-  // v2.1 (session note 8/25): short beep at 3, 2, 1 seconds left in each minute.
-  if(em.running && live && s>=1 && s<=3){
-    const cue=em.idx+':'+s;
-    if(cue!==emomLastCue){ emomLastCue=cue; beep(120, 660); }
-  }
-  clock.textContent=Math.floor(s/60)+':'+pad(s%60);
-  const round=Math.floor(em.idx/per)+1; const cur=w.ex[em.idx%per]||{name:'—'}; const nx=(em.idx+1<total)?(w.ex[(em.idx+1)%per]||{name:'—'}).name:'Done';
-  const r=document.getElementById('emom-round'); if(r) r.textContent='Round '+round+' of '+em.rounds;
-  const n=document.getElementById('emom-now'); if(n) n.textContent=cur.name;
-  const nn=document.getElementById('emom-next'); if(nn) nn.textContent='Next · '+nx;
-}
-/* v2.1 (session notes 8/18, 8/20): the last minute ends ON the EMOM screen.
-   Nothing leaves the screen until FINISH — the walk block opens instead. */
-function emomComplete(){
-  const em=sessionState.emom;
-  em.running=false; em.done=true; em.endAt=null; em.remain=null;
-  clearInterval(emomInterval); emomInterval=null;
+function pastEmomMin(){ const em=sessionState.emom; return em.emomMin!=null ? em.emomMin : em.rounds*emomPer(em.emomId); }
+function setPastEmom(id){
+  const em=sessionState && sessionState.emom; if(!em || !em.past) return;
+  em.emomId=id;
+  document.querySelectorAll('#emom-past .emom-pick').forEach(b=>b.classList.toggle('sel', b.id==='past-emom-'+id));
   persistActive('session');
-  emomShowDone();
 }
-function emomShowDone(){
-  const set=(id,t)=>{ const el=document.getElementById(id); if(el) el.textContent=t; };
-  set('emom-clock','0:00'); set('emom-round','All rounds done'); set('emom-now','EMOM done');
-  set('emom-next','Walk below if you want, then FINISH.');
-  emomShowControls(true);
+function setPastRounds(d){
+  const em=sessionState && sessionState.emom; if(!em || !em.past) return;
+  em.rounds=Math.max(1, Math.min(5, (em.rounds||0)+d));
+  em.emomMin=null;   // changing rounds refills the minutes as rounds × 6
+  const r=document.getElementById('past-rounds'); if(r) r.textContent=em.rounds;
+  const m=document.getElementById('past-emom-min'); if(m) m.value=pastEmomMin();
+  persistActive('session');
 }
-function emomShowControls(done){
-  const show=(id,on)=>{ const el=document.getElementById(id); if(el) el.style.display=on?'':'none'; };
-  show('emom-start',!done); show('emom-drop',!done);
-  const wk=document.getElementById('emom-walk'); if(wk) wk.style.display=done?'block':'none';
+function setPastEmomMin(v){
+  const em=sessionState && sessionState.emom; if(!em || !em.past) return;
+  const n=parseInt(v,10);
+  em.emomMin=(v==='' || isNaN(n)) ? null : Math.max(0,n);   // blank = rounds × 6
+  persistActive('session');
 }
-function emomToggle(){
-  const em=sessionState.emom; if(em.done) return;
-  const btn=document.getElementById('emom-start');
-  if(!em.running){ em.running=true; em.endAt=Date.now()+(em.remain!=null?em.remain:60000); em.remain=null; emomLastPaint=Date.now(); clearInterval(emomInterval); emomInterval=setInterval(emomPaint,250); if(btn) btn.textContent='PAUSE'; }
-  else { em.running=false; em.remain=Math.max(0,em.endAt-Date.now()); clearInterval(emomInterval); emomInterval=null; if(btn) btn.textContent='RESUME'; }
-  persistActive('session'); emomPaint();
+function pastEmomBack(){
+  const editing=sessionState && sessionState.editingIndex!=null;
+  const d=sessionState && sessionState.date;
+  clearActive(); sessionState=null;
+  if(editing){ Nav.toHistory(); return; }
+  Nav.toManual({}); if(d) manualPickDate(d);
 }
-function emomReset(){ const em=sessionState.emom; em.idx=0; em.endAt=null; em.remain=null; em.running=false; em.done=false; clearInterval(emomInterval); emomInterval=null; emomShowControls(false); const b=document.getElementById('emom-start'); if(b) b.textContent='START'; persistActive('session'); emomPaint(); }
-function emomDrop(){ const em=sessionState.emom; if(em.done) return; if(em.rounds>2){ em.rounds--; const w=emomWorkout(em.emomId)||{ex:[]}; if(em.idx>=em.rounds*(w.ex.length||6)){ emomComplete(); return; } persistActive('session'); emomPaint(); } }
-function emomOpenVideo(){ const em=sessionState.emom; if(em.done) return; const w=emomWorkout(em.emomId)||{ex:[]}; const per=w.ex.length||6; const e=w.ex[em.idx%per]; if(e&&e.url) window.open(e.url,'_blank'); }
-function finishEmomSession(){
-  clearInterval(emomInterval); emomInterval=null;
-  const em=sessionState.emom;
-  // Pause rather than lose a running minute — Back from Finish resumes here.
-  if(em.running){ em.running=false; em.remain=Math.max(0,em.endAt-Date.now()); em.endAt=null; }
-  finisherTimer.stop();
-  const walkMin = sessionState.finisherMin!=null
-    ? sessionState.finisherMin
-    : (finisherTimer.elapsedSec()>0 ? finisherTimer.minutes() : 0);
-  const draft={ date:sessionState.date||todayStr(), slot:'EMOM', emomId:em.emomId, rounds:em.rounds, readiness:(sessionState.variant&&sessionState.variant.readiness)||null, startedAt:sessionState.startedAt, min:Math.max(1,em.idx)+walkMin };
+function finishEmomPast(){ Nav.toFinish(emomDraftFrom(sessionState)); }
+
+/* One draft builder for every EMOM finish: the live screen, the past screen,
+   and an overnight leftover closed with "Finish & log it" (v2.2 §D1). `src` is
+   sessionState or an `active` snapshot; both carry the same fields. */
+function emomDraftFrom(src){
+  const v=src.variant||{};
+  const em=src.emom||{emomId:v.emomId, rounds:0};
+  let emomMin, rounds;
+  if(em.past){ rounds=em.rounds; emomMin=em.emomMin!=null ? em.emomMin : em.rounds*emomPer(em.emomId); }
+  else { const d=emomDoneSoFar(em); rounds=d.rounds; emomMin=d.min; }
+  const walkMin = src.finisherMin!=null ? src.finisherMin
+    : (!em.past && finisherTimer.elapsedSec()>0 ? finisherTimer.minutes() : 0);
+  const draft={ date:src.date||todayStr(), slot:'EMOM', emomId:em.emomId||v.emomId, rounds,
+    readiness:v.readiness||null, startedAt:src.startedAt, min:emomMin+walkMin };
   // The walk is part of the session (Joel, 2026-09-30): logged as the finisher, minutes in the total.
   if(walkMin>0){
     draft.finisher={ mode:'walk', min:walkMin };
-    const fv=finisherVestLb(); if(fv) draft.finisher.vest=fv;
+    const fv=src.finisherVest;
+    if(fv!=null && fv>0){
+      draft.finisher.vest=fv;
+      const prefs=store.get('prefs')||{}; prefs.vestLb=fv; store.set('prefs', prefs);   // worn weight becomes the default
+    }
   }
-  const es = stepsDraft(); if(es) draft.steps = es;
-  Nav.toFinish(draft);
+  const st=src.steps; const a=st?parseInt(st.start,10):NaN, b=st?parseInt(st.end,10):NaN;
+  if(!isNaN(a) && !isNaN(b)) draft.steps={start:a, end:b};
+  if(src.manual) draft.manual=true;
+  // An edit keeps what the past screen doesn't show.
+  if(v.existing){
+    if(v.existing.note) draft.note=v.existing.note;
+    if(!draft.steps && v.existing.steps) draft.steps=v.existing.steps;
+  }
+  return draft;
+}
+function renderEmomSession(variant){
+  if(variant.manual) return renderEmomPast(variant);
+  const cfg=store.get('config');
+  const baseRounds=(cfg&&cfg.emom&&cfg.emom.rounds)||3;
+  if(!sessionState.emom){
+    // Only a genuine resume keeps the walk timer; a fresh session starts it clean.
+    if(!sessionState.restored) finisherTimer.reset();
+    // The clock starts when the screen opens, with the 10 s get-ready.
+    sessionState.emom={ v:2, emomId:variant.emomId, rounds: variant.degraded?Math.max(2,baseRounds-1):baseRounds,
+                        base:Date.now(), pausedAt:null, stage:'run' };
+  }
+  sessionState.emom=emomMigrate(sessionState.emom);
+  if(sessionState.emom.stage==='done') return emomDoneHtml(variant);
+  return emomTimerHtml(variant);
+}
+
+/* ---- v2.2 §B: EMOM timer screen (layout and sizes from the approved mockup).
+   The markup is static; emomPaint() fills it from the clock. ---- */
+function emomTimerHtml(variant){
+  const em=sessionState.emom, per=emomPer(em.emomId);
+  let segs='';
+  for(let r=0;r<em.rounds;r++){
+    let g=''; for(let i=0;i<per;i++) g+='<div class="emom-seg"><i></i></div>';
+    segs+=`<div class="emom-rgrp">${g}</div>`;
+  }
+  const drop = em.rounds>2 ? `Drop a round (${em.rounds} → ${em.rounds-1})` : 'Drop a round (at 2, the floor)';
+  return `<div class="screen active emom-col" id="emom-screen">
+    <div class="emom-head">
+      <span class="emom-name" style="color:${emomStateColor(variant)};">${escHtml(emomShortName(em.emomId))}</span>
+      <span class="emom-pill" id="emom-pill">GET READY</span>
+    </div>
+    <div class="emom-meter">
+      <div class="emom-segs" id="emom-segs">${segs}</div>
+      <span class="emom-left"><b id="emom-left">0:00</b> <span>left</span></span>
+    </div>
+    <div class="emom-now">
+      <div class="flex-between">
+        <span class="emom-lbl" id="emom-nowlabel">FIRST UP</span>
+        <button class="emom-video" onclick="emomOpenVideo()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg>Video</button>
+      </div>
+      <span class="emom-nowname" id="emom-nowname">—</span>
+    </div>
+    <div class="emom-box" id="emom-box">
+      <span class="emom-paused">PAUSED</span>
+      <span class="emom-box-lbl" id="emom-boxlabel">GET READY</span>
+      <span class="emom-tval" id="emom-tval">0:10</span>
+    </div>
+    <div class="emom-next">
+      <div class="flex-between" style="gap:8px;">
+        <span class="emom-lbl">NEXT</span>
+        <span class="emom-chip hidden" id="emom-nextchip"></span>
+      </div>
+      <span class="emom-nextname" id="emom-nextname">—</span>
+    </div>
+    <div class="emom-grow"></div>
+    <div class="emom-ctrls">
+      <button class="emom-ctrl" id="emom-back" onclick="emomBack()">Back</button>
+      <button class="emom-ctrl" id="emom-pause" onclick="emomTogglePause()">Pause</button>
+      <button class="emom-ctrl" id="emom-skip" onclick="emomSkip()">Skip</button>
+      <button class="emom-ctrl" id="emom-stop" onclick="emomAskStop()">Stop</button>
+    </div>
+    <button class="emom-drop" id="emom-drop" onclick="emomDrop()">${drop}</button>
+    <div class="emom-flash" id="emom-flash"></div>
+  </div>`;
+}
+
+/* Repaint from the clock. Sounds fire only live: not on the repaint right
+   after a button (quiet), not while paused, and not when the previous repaint
+   was 1.6 s+ ago (the phone slept) — the screen just jumps to the right spot. */
+let emomLastKey=null, emomLastSeg=null;
+function emomPaint(quiet){
+  const em=sessionState && sessionState.emom;
+  if(!em || em.past || em.stage!=='run' || !document.getElementById('emom-screen')) return;
+  const now=Date.now();
+  const gap = emomLastPaint==null ? Infinity : now-emomLastPaint;
+  emomLastPaint=now;
+  const live = !quiet && gap<1600 && em.pausedAt==null;
+  const w=emomWorkout(em.emomId)||{ex:[]}, per=emomPer(em.emomId), total=em.rounds*per;
+  const p=emomWhere(emomElapsed(em), total);
+  if(p.seg>=total){ emomFinishRun(live); return; }
+
+  const secLeft=Math.ceil(p.segLeft/1000);
+  const key=p.seg+':'+(p.segLeft<=3000 ? secLeft : 'x');
+  if(key!==emomLastKey){
+    if(live){
+      if(p.seg!==emomLastSeg){ emomSound('change'); emomFlash(); }
+      else if(p.segLeft<=3000 && secLeft>=1) emomSound('tick');
+    }
+    emomLastKey=key;
+  }
+  emomLastSeg=p.seg;
+
+  const ready=p.seg<0, paused=em.pausedAt!=null;
+  const warn=!ready && p.segLeft<4000;
+  const set=(id,t)=>{ const el=document.getElementById(id); if(el && el.textContent!==t) el.textContent=t; };
+  const cur=ready ? 0 : p.seg, nextIdx=ready ? 1 : p.seg+1;
+  const name=i=>(w.ex[i%per]||{name:'—'}).name;
+  const pill=document.getElementById('emom-pill');
+  pill.classList.toggle('ready', ready);
+  set('emom-pill', ready ? 'GET READY' : 'Round '+(Math.floor(p.seg/per)+1)+' of '+em.rounds);
+  set('emom-nowlabel', ready ? 'FIRST UP' : 'NOW');
+  set('emom-nowname', name(cur));
+  const box=document.getElementById('emom-box');
+  box.classList.toggle('ready', ready); box.classList.toggle('warn', warn); box.classList.toggle('paused', paused);
+  set('emom-boxlabel', ready ? 'GET READY' : (warn ? 'SWITCH COMING' : 'THIS MINUTE'));
+  set('emom-tval', '0:'+pad(Math.min(ready ? 10 : 59, Math.floor(p.segLeft/1000))));
+  set('emom-nextname', nextIdx>=total ? 'Done' : name(nextIdx));
+  const roundEnd=!ready && (p.seg%per===per-1) && nextIdx<total;
+  const chip=document.getElementById('emom-nextchip');
+  chip.classList.toggle('hidden', !roundEnd);
+  set('emom-nextchip', roundEnd ? 'Starts round '+(Math.floor(nextIdx/per)+1) : '');
+  document.querySelectorAll('#emom-segs .emom-seg').forEach((s,i)=>{
+    s.classList.toggle('full', !ready && i<p.seg);
+    s.firstChild.style.width = (!ready && i===p.seg) ? ((1-p.segLeft/EMOM_MIN_MS)*100).toFixed(1)+'%' : '0';
+  });
+  set('emom-left', fmtMinSec(ready ? total*EMOM_MIN_MS : (total-p.seg-1)*EMOM_MIN_MS+p.segLeft));
+  set('emom-pause', paused ? 'Resume' : 'Pause');
+}
+/* The clock ran out (or Skip / a dropped round passed the end). Stays on the
+   EMOM screen: the done screen replaces the timer (v2.1 §C2 rule kept). */
+function emomFinishRun(live){
+  clearInterval(emomInterval); emomInterval=null;
+  emomMarkDone(false);
+  if(live) emomSound('finish');
+  emomUnlockScreen();
+  emomCloseAsk();
+  emomRerender();
+}
+
+/* ---- controls (every press autosaves) ---- */
+function emomJumpTo(ms){
+  const em=sessionState.emom, total=em.rounds*emomPer(em.emomId);
+  emomSetElapsed(em, ms);
+  emomLastKey=null;
+  if(emomWhere(emomElapsed(em), total).seg>=total){ emomFinishRun(false); return; }
+  persistActive('session');
+  emomPaint(true);
+}
+function emomTogglePause(){
+  const em=sessionState && sessionState.emom; if(!em || em.stage!=='run') return;
+  emomUnlockAudio();
+  if(em.pausedAt!=null){ em.base=Date.now()-em.pausedAt; em.pausedAt=null; }
+  else em.pausedAt=Date.now()-em.base;
+  persistActive('session');
+  emomPaint(true);
+}
+// Back: start of this minute; within its first 2 s, start of the previous one.
+function emomBack(){
+  const em=sessionState && sessionState.emom; if(!em || em.stage!=='run') return;
+  emomUnlockAudio();
+  const p=emomWhere(emomElapsed(em), em.rounds*emomPer(em.emomId));
+  let t;
+  if(p.seg<0) t=0;
+  else if(EMOM_MIN_MS-p.segLeft < 2000) t = p.seg===0 ? 0 : EMOM_READY_MS+(p.seg-1)*EMOM_MIN_MS;
+  else t=EMOM_READY_MS+p.seg*EMOM_MIN_MS;
+  emomJumpTo(t);
+}
+function emomSkip(){
+  const em=sessionState && sessionState.emom; if(!em || em.stage!=='run') return;
+  emomUnlockAudio();
+  const p=emomWhere(emomElapsed(em), em.rounds*emomPer(em.emomId));
+  emomJumpTo(p.seg<0 ? EMOM_READY_MS : EMOM_READY_MS+(p.seg+1)*EMOM_MIN_MS);
+}
+function emomDrop(){
+  const em=sessionState && sessionState.emom; if(!em || em.stage!=='run' || em.rounds<=2) return;
+  em.rounds--;
+  const total=em.rounds*emomPer(em.emomId);
+  if(emomWhere(emomElapsed(em), total).seg>=total){ emomFinishRun(false); return; }
+  emomRerender();   // regroups the meter and relabels the button
+}
+// Stop asks first; the timer keeps running behind the dialog (PE timer rule).
+function emomAskStop(){
+  if(!sessionState || !sessionState.emom || document.getElementById('emom-ask')) return;
+  const d=document.createElement('div');
+  d.className='emom-ask'; d.id='emom-ask';
+  d.innerHTML=`<div class="emom-askbox" role="dialog" aria-modal="true">
+      <span style="font-size:32px;font-weight:800;letter-spacing:-1px;">End EMOM early?</span>
+      <span class="sub center">Logs the rounds you finished, then the walk + Finish screen.</span>
+      <div style="display:flex;gap:12px;width:100%;margin-top:12px;">
+        <button id="emom-ask-yes" class="emom-askbtn" style="background:#F06A2A;" onclick="emomEndEarly()">End it</button>
+        <button id="emom-ask-no" class="emom-askbtn" style="background:var(--chip);" onclick="emomCloseAsk()">Keep going</button>
+      </div>
+    </div>`;
+  document.body.appendChild(d);
+}
+function emomCloseAsk(){ const d=document.getElementById('emom-ask'); if(d && d.parentNode) d.parentNode.removeChild(d); }
+function emomEndEarly(){
+  emomCloseAsk();
+  if(!sessionState || !sessionState.emom || sessionState.emom.stage!=='run') return;
+  clearInterval(emomInterval); emomInterval=null;
+  emomMarkDone(true);
+  emomUnlockScreen();
+  emomRerender();
+}
+/* Done screen → back to the timer, paused: where End it stopped it, or at the
+   start of the last minute after a full run. */
+function emomBackToTimer(){
+  const em=sessionState && sessionState.emom; if(!em || em.stage!=='done') return;
+  emomUnlockAudio();
+  const total=em.rounds*emomPer(em.emomId);
+  if(!em.ended || em.pausedAt==null) em.pausedAt=EMOM_READY_MS+Math.max(0,total-1)*EMOM_MIN_MS;
+  em.stage='run';
+  delete em.doneMin; delete em.doneRounds; delete em.ended;
+  emomRerender();
+}
+function emomOpenVideo(){
+  const em=sessionState && sessionState.emom; if(!em || em.stage!=='run') return;
+  const w=emomWorkout(em.emomId)||{ex:[]}, per=emomPer(em.emomId);
+  const p=emomWhere(emomElapsed(em), em.rounds*per);
+  const e=w.ex[(p.seg<0 ? 0 : p.seg)%per];
+  if(e && e.url) window.open(e.url,'_blank');
+}
+
+/* ---- sounds (from the PE timer). One AudioContext, opened on a tap. ---- */
+let emomAC=null;
+function emomUnlockAudio(){
+  try{
+    if(!emomAC) emomAC=new (window.AudioContext||window.webkitAudioContext)();
+    if(emomAC.state!=='running') emomAC.resume();
+    const o=emomAC.createOscillator(), g=emomAC.createGain();   // silent blip opens the audio path
+    g.gain.value=0.0001; o.connect(g); g.connect(emomAC.destination); o.start(); o.stop(emomAC.currentTime+0.02);
+  }catch(e){}
+}
+function emomTone(freq, start, dur){
+  try{
+    if(!emomAC) return;
+    if(emomAC.state!=='running') emomAC.resume();
+    const t=emomAC.currentTime+start, o=emomAC.createOscillator(), g=emomAC.createGain();
+    o.type='square'; o.frequency.value=freq;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t+0.01);
+    g.gain.setValueAtTime(0.35, t+dur-0.04); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+    o.connect(g); g.connect(emomAC.destination); o.start(t); o.stop(t+dur+0.02);
+  }catch(e){}
+}
+function emomSound(kind){
+  if(kind==='tick') emomTone(880, 0, 0.15);
+  else if(kind==='change'){ emomTone(660, 0, 0.2); emomTone(990, 0.22, 0.32); }
+  else if(kind==='finish'){ emomTone(523,0,0.2); emomTone(659,0.22,0.2); emomTone(784,0.44,0.2); emomTone(1047,0.66,0.9); }
+}
+function emomFlash(){
+  const f=document.getElementById('emom-flash'); if(!f) return;
+  f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
+}
+
+/* ---- keep the screen on while the timer shows. Unsupported → nothing breaks. ---- */
+let emomWake=null;
+async function emomLockScreen(){
+  try{
+    if(emomWake || !('wakeLock' in navigator) || document.hidden) return;
+    emomWake=await navigator.wakeLock.request('screen');
+    emomWake.addEventListener('release', ()=>{ emomWake=null; });
+  }catch(e){ emomWake=null; }
+}
+function emomUnlockScreen(){ try{ if(emomWake) emomWake.release(); }catch(e){} emomWake=null; }
+
+/* Re-draw the EMOM screen in place (timer ↔ done) without leaving the session. */
+function emomRerender(){
+  const app=document.getElementById('app'); if(!app || !sessionState) return;
+  app.innerHTML=renderEmomSession(sessionState.variant);
+  persistActive('session');
+  emomAfterRender();
+}
+function emomStateColor(v){ const st=v && v.readiness && v.readiness.state; return st==='GREEN' ? 'var(--green)' : (st==='YELLOW' ? 'var(--yellow)' : 'var(--text)'); }
+function fmtMinSec(ms){ const t=Math.max(0, Math.floor(ms/1000)); return Math.floor(t/60)+':'+pad(t%60); }
+
+/* ---- v2.2 §C: EMOM-done screen. Walk after (timer, typed minutes, vest,
+   start/end steps), Back to the timer, FINISH. Never jumps to Finish itself. ---- */
+function emomDoneHtml(variant){
+  const em=sessionState.emom;
+  if(!sessionState.steps) sessionState.steps={start:'', end:''};
+  const st=sessionState.steps;
+  const prefs=store.get('prefs')||{};
+  const vest=sessionState.finisherVest!=null ? sessionState.finisherVest : '';
+  const walk=sessionState.finisherMin!=null ? sessionState.finisherMin : '';
+  const vestChip=(prefs.vestLb && vest==='') ? `<button class="chip" id="vest-chip" style="align-self:flex-start;" onclick="applyVestDefault('finisherVest')">Vest ${prefs.vestLb} lb</button>` : '';
+  let bars=''; for(let r=0;r<em.rounds;r++) bars+=`<div class="emom-dbar${r<(em.doneRounds||0)?' full':''}"></div>`;
+  const dr=em.doneRounds||0;
+  return `<div class="screen active emom-col" id="emom-done">
+    <span class="emom-name" style="color:${emomStateColor(variant)};">${escHtml(emomShortName(em.emomId))}</span>
+    <div class="card" style="margin:0;padding:16px 18px;display:flex;flex-direction:column;gap:10px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;">
+        <span style="font-size:44px;font-weight:800;line-height:1;letter-spacing:-1px;">DONE</span>
+        <span id="emom-done-sub" style="font-size:15px;font-weight:600;color:#C9CDD3;text-align:right;">${dr} round${dr===1?'':'s'} · ${fmtMinSec((em.doneMin||0)*EMOM_MIN_MS)}</span>
+      </div>
+      <div style="display:flex;gap:6px;">${bars}</div>
+    </div>
+    <div class="card" id="emom-walk" style="margin:0;padding:18px;display:flex;flex-direction:column;gap:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;">
+        <span class="card-title">Walk after</span><span class="sub">optional</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span id="finisher-timer" style="flex:1;min-width:0;background:var(--surface-2);border-radius:999px;padding:8px 20px;font-size:36px;font-weight:700;">00:00</span>
+        <button id="finisher-toggle" onclick="toggleFinisherTimer()" style="flex-shrink:0;height:56px;padding:0 24px;border:none;border-radius:999px;background:var(--accent);color:#fff;font-size:17px;font-weight:800;cursor:pointer;">START</button>
+      </div>
+      <div class="emom-grid2">
+        <label class="emom-lab">Or type minutes<input class="emom-in" id="finisher-min" type="text" inputmode="numeric" placeholder="0" value="${walk}" oninput="setFinisherMin(this.value)"></label>
+        <label class="emom-lab">Vest (lb)<input class="emom-in" id="vest-lb" type="text" inputmode="decimal" placeholder="none" value="${vest}" oninput="setVest(this.value,'finisherVest')"></label>
+        <label class="emom-lab">Start steps<input class="emom-in" id="walk-steps-start" type="text" inputmode="numeric" placeholder="from phone" value="${escHtml(st.start||'')}" oninput="setWalkSteps('start', this.value)"></label>
+        <label class="emom-lab">End steps<input class="emom-in" id="walk-steps-end" type="text" inputmode="numeric" placeholder="after walk" value="${escHtml(st.end||'')}" oninput="setWalkSteps('end', this.value)"></label>
+      </div>
+      ${vestChip}
+      <div style="display:flex;justify-content:space-between;align-items:baseline;background:var(--surface-2);border-radius:12px;padding:12px 14px;">
+        <span style="font-size:15px;font-weight:600;color:var(--text-2);">Steps on the walk</span>
+        <span id="walk-steps" style="font-size:22px;font-weight:800;">${walkStepsText()}</span>
+      </div>
+    </div>
+    <div class="emom-grow"></div>
+    <a class="link" id="emom-back-timer" style="align-self:center;font-size:15px;padding:10px;" onclick="emomBackToTimer()">‹ Back to the timer</a>
+    <button class="pill-btn accent" style="letter-spacing:1px;" onclick="finishEmomSession()">FINISH</button>
+  </div>`;
+}
+/* After the EMOM screen is drawn: the done screen shows the walk timer's real
+   time and button (a resume restores the timer before the screen exists). */
+function emomAfterRender(){
+  const em=sessionState && sessionState.emom; if(!em || em.past) return;
+  if(em.stage==='done'){
+    finisherTimer.render();
+    const b=document.getElementById('finisher-toggle');
+    if(b) b.textContent = finisherTimer.running ? 'PAUSE' : (finisherTimer.accMs>0 ? 'RESUME' : 'START');
+    return;
+  }
+  // Timer: repaint ~5×/s from the clock, quietly first; keep the screen on.
+  clearInterval(emomInterval);
+  emomInterval=setInterval(()=>emomPaint(), 200);
+  emomPaint(true);
+  emomLockScreen();
+}
+function walkStepsText(){
+  const s=sessionState && sessionState.steps; if(!s) return '–';
+  const a=parseInt(s.start,10), b=parseInt(s.end,10);
+  return (!isNaN(a) && !isNaN(b) && b>=a) ? (b-a).toLocaleString() : '–';
+}
+function setWalkSteps(which, val){
+  setStepField(which, val);
+  const el=document.getElementById('walk-steps'); if(el) el.textContent=walkStepsText();
+}
+/* FINISH lives on the done screen. If it is ever reached with the timer still
+   going, that counts as End it: what's done so far, and Back from Finish lands
+   on the done screen. */
+function finishEmomSession(){
+  clearInterval(emomInterval); emomInterval=null;
+  finisherTimer.stop();   // stopped, not reset, so Finish → Back restores it (v2.1)
+  emomMarkDone(true);
+  Nav.toFinish(emomDraftFrom(sessionState));
+}
+/* Freeze the EMOM at what's been done. `early` = Stop → End it (or FINISH
+   mid-run); otherwise the clock ran out, Skip passed the end, or a dropped
+   round ended it. */
+function emomMarkDone(early){
+  let em=emomMigrate(sessionState.emom);
+  if(em.stage!=='done'){
+    const d=emomDoneSoFar(em), e=emomElapsed(em);
+    const total=em.rounds*emomPer(em.emomId);
+    em=Object.assign(em, early ? {doneMin:d.min, doneRounds:d.rounds}
+                               : {doneMin:total, doneRounds:em.rounds},
+                     {stage:'done', ended:!!early, pausedAt:early ? e : EMOM_READY_MS+total*EMOM_MIN_MS});
+  }
+  sessionState.emom=em;
+  return em;
 }
 
 /* ================= boot ================= */

@@ -221,23 +221,24 @@ console.log('\n== C1: weight Save opens the reps pad; outside tap cancels ==');
 }
 
 console.log('\n== C2: EMOM ends on the EMOM screen, walk block, FINISH ==');
+// v2.2: ported to the new timer (clock starts with the screen; done screen replaces
+// the timer). Same intent as the v2.1 checks; the v2.2 layout is in test-v220.js.
 let emomDoneSeed = null;
 {
   const a = boot(WED);
   answer(a, 4, 4, 4); a.w.startSession();
   const total = a.ev('sessionState.emom.rounds * emomWorkout(sessionState.emom.emomId).ex.length');
-  ok('walk block hidden while the EMOM runs', a.w.document.getElementById('emom-walk').style.display==='none');
-  a.w.emomToggle();
-  for(let m=0; m<total; m++){ a.w.__clockOffset += 60000; a.w.emomPaint(); }
+  ok('walk block hidden while the EMOM runs', !a.w.document.getElementById('emom-walk'));
+  for(let m=0; m<=total; m++){ a.w.__clockOffset += 60000; a.w.emomPaint(); }   // get-ready + every minute
   eq('still on the session screen after the last minute', a.ev('lastRender.name'), 'session');
   eq('no Finish draft created', a.ev('finishDraft'), null);
-  ok('shows "EMOM done"', /EMOM done/.test(a.w.document.getElementById('emom-now').textContent));
-  eq('emom marked done, not running', [a.ev('sessionState.emom.done'), a.ev('sessionState.emom.running')], [true, false]);
-  ok('walk block visible', a.w.document.getElementById('emom-walk').style.display==='block');
-  ok('START hidden once done', a.w.document.getElementById('emom-start').style.display==='none');
+  ok('shows the EMOM done screen', /DONE/.test(a.w.document.getElementById('emom-done').textContent));
+  eq('emom marked done', a.ev('sessionState.emom.stage'), 'done');
+  ok('walk block visible', !!a.w.document.getElementById('emom-walk'));
+  ok('timer controls gone once done', !a.w.document.getElementById('emom-pause'));
   ok('walk block has a vest field', !!a.w.document.querySelector('#emom-walk #vest-lb'));
   ok('walk block has no mode picker', !a.w.document.getElementById('fin-mode-carry'));
-  eq('done state autosaved to active', a.store('active').emom.done, true);
+  eq('done state autosaved to active', a.store('active').emom.stage, 'done');
   // Resume keeps the done state
   const seed = {}; for(let i=0;i<a.w.localStorage.length;i++){ const k=a.w.localStorage.key(i); if(k.startsWith('wos.')) seed[k.slice(4)] = JSON.parse(a.w.localStorage.getItem(k)); }
   emomDoneSeed = seed;
@@ -256,8 +257,8 @@ let emomDoneSeed = null;
 {
   const a = boot(WED, emomDoneSeed);
   a.w.resumeActive();
-  ok('resume after done shows EMOM done', /EMOM done/.test(a.w.document.getElementById('emom-now').textContent));
-  ok('resume after done shows the walk block', a.w.document.getElementById('emom-walk').style.display==='block');
+  ok('resume after done shows the done screen', !!a.w.document.getElementById('emom-done'));
+  ok('resume after done shows the walk block', !!a.w.document.getElementById('emom-walk'));
   a.dom.window.close();
 }
 {
@@ -272,27 +273,25 @@ let emomDoneSeed = null;
   const a = boot(WED);
   answer(a, 4, 4, 4); a.w.startSession();
   const per = a.ev('emomWorkout(sessionState.emom.emomId).ex.length');
-  a.w.emomToggle();
-  for(let m=0; m<2*per; m++){ a.w.__clockOffset += 60000; a.w.emomPaint(); }   // two full rounds of three
-  a.w.emomDrop();                                                             // 3 → 2 rounds: already done
-  eq('Drop a round that ends it stays on screen', [a.ev('lastRender.name'), a.ev('sessionState.emom.done')], ['session', true]);
+  a.w.__clockOffset = 10000 + 2*per*60000 + 1000; a.w.emomPaint();   // two full rounds of three
+  a.w.emomDrop();                                                      // 3 → 2 rounds: already done
+  eq('Drop a round that ends it stays on screen', [a.ev('lastRender.name'), a.ev('sessionState.emom.stage')], ['session', 'done']);
   a.dom.window.close();
 }
 
-console.log('\n== C4: EMOM countdown beeps, live only ==');
+console.log('\n== C4: EMOM countdown sounds, live only (v2.2 PE sounds replace the v2.1 beeps) ==');
 {
   const a = boot(WED);
   answer(a, 4, 4, 4); a.w.startSession();
-  a.w.emomToggle();
-  a.w.__beeps.length = 0;
-  // Walk the clock from 56 s elapsed to 60.25 s in 250 ms steps, like the live repaint.
-  a.w.__clockOffset += 56000; a.w.emomPaint();
+  a.ev(`window.__snd = []; emomSound = function(k){ window.__snd.push(k); };`);
+  // Walk the clock from 56 s into minute 1 to the start of minute 2 in 250 ms steps, like the live repaint.
+  a.w.__clockOffset = 10000 + 56000; a.w.emomPaint();
   for(let i=0;i<17;i++){ a.w.__clockOffset += 250; a.w.emomPaint(); }
-  eq('beeps at 3, 2, 1 (short) then 0 (full)', a.w.__beeps, [120,120,120,300]);
-  a.w.__beeps.length = 0;
+  eq('ticks at 3, 2, 1 then the minute-change chime', a.w.__snd, ['tick','tick','tick','change']);
+  a.w.__snd.length = 0;
   // Phone sleeps 3 minutes, wakes: repaint after a long gap must be silent.
   a.w.__clockOffset += 3*60000; a.w.emomPaint();
-  eq('no late beep on wake', a.w.__beeps, []);
+  eq('no late sound on wake', a.w.__snd, []);
   a.dom.window.close();
 }
 
@@ -363,7 +362,7 @@ console.log('\n== Finish → Back returns to the session intact ==');
   a.w.resumeActive();
   a.ev('finishEmomSession()');
   a.w.document.getElementById('finish-back').click();
-  ok('EMOM Back returns to the done screen with the walk block', /EMOM done/.test(a.w.document.getElementById('emom-now').textContent) && a.w.document.getElementById('emom-walk').style.display==='block');
+  ok('EMOM Back returns to the done screen with the walk block', !!a.w.document.getElementById('emom-done') && !!a.w.document.getElementById('emom-walk'));
   a.dom.window.close();
 }
 
@@ -373,7 +372,8 @@ console.log('\n== Library + version ==');
   a.ev("Nav.tab('workouts')");
   ok('library shows "This week: Kettlebell EMOM 1"', /This week: Kettlebell EMOM 1/.test(txt(a.w)));
   ok('this week\'s EMOM row is marked', /Kettlebell EMOM 1\s*This week/.test(txt(a.w)));
-  ok('APP_VERSION is 2.1.0', /const APP_VERSION = '2\.1\.0'/.test(HTML));
+  // v2.2: older files only check the version is set; the newest test-vXYZ.js checks the exact one.
+  ok('APP_VERSION is set', /const APP_VERSION = '\d+\.\d+\.\d+'/.test(HTML));
   a.dom.window.close();
 }
 

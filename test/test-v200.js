@@ -79,5 +79,7 @@ ok('EMOM finish carries emomId', o.finishEmomId === 'E1', o.finishEmomId);
 ok('YELLOW readiness computed', o.yState === 'YELLOW', o.yState);
 ok('YELLOW EMOM drops to 2 rounds', o.yRounds === 2, o.yRounds);
 
+// v2.2: the EMOM timer now starts by itself; close the window so its repaint interval can't hold the process open.
+dom.window.close();
 console.log('\nv2.0: ' + pass + ' pass, ' + fail + ' fail');
 if(fail){ console.log(F.join('\n')); process.exit(1); }
